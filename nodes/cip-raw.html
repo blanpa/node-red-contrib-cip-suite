@@ -1,0 +1,94 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-raw", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      endpoint: { value: "", type: "cip-endpoint", required: true },
+      service: { value: "" },
+      classId: { value: "" },
+      instanceId: { value: "" },
+      attributeId: { value: "" },
+      useConnected: { value: false }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "cip raw",
+    label: function () {
+      return this.name || "cip raw";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-raw">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-service"><i class="fa fa-cog"></i> Service Code</label>
+    <input type="text" id="node-input-service" placeholder="Hex, e.g. 0E" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-classId"><i class="fa fa-cube"></i> Class ID</label>
+    <input type="text" id="node-input-classId" placeholder="Hex, e.g. 01" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-instanceId"><i class="fa fa-hashtag"></i> Instance ID</label>
+    <input type="text" id="node-input-instanceId" placeholder="Hex, e.g. 01" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-attributeId"><i class="fa fa-list-ol"></i> Attribute ID</label>
+    <input type="text" id="node-input-attributeId" placeholder="Hex (optional)" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-useConnected"><i class="fa fa-link"></i> Connected</label>
+    <input type="checkbox" id="node-input-useConnected" style="width:auto" />
+    <span>Use connected messaging (ForwardOpen)</span>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-raw">
+  <p>Sends raw CIP service requests to an Allen-Bradley PLC for advanced use cases.</p>
+  <h3>Inputs</h3>
+  <dl class="message-properties">
+    <dt>service <span class="property-type">number</span></dt>
+    <dd>CIP service code (overrides configured value).</dd>
+    <dt>classId <span class="property-type">number</span></dt>
+    <dd>CIP class ID (overrides configured value).</dd>
+    <dt>instanceId <span class="property-type">number</span></dt>
+    <dd>CIP instance ID (overrides configured value).</dd>
+    <dt>attributeId <span class="property-type">number</span></dt>
+    <dd>CIP attribute ID (overrides configured value).</dd>
+    <dt>data <span class="property-type">array|buffer</span></dt>
+    <dd>Optional raw data payload.</dd>
+    <dt>requests <span class="property-type">array</span></dt>
+    <dd>Optional array of request objects for Multiple Service Packet (service 0x0A).
+    Each object should contain <code>service</code>, <code>classId</code>, <code>instanceId</code>,
+    and optionally <code>attributeId</code> and <code>data</code>.</dd>
+  </dl>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload.success <span class="property-type">boolean</span></dt>
+    <dd>Whether the request succeeded.</dd>
+    <dt>payload.data <span class="property-type">buffer</span></dt>
+    <dd>Raw response data from the PLC.</dd>
+    <dt>payload.responses <span class="property-type">array</span></dt>
+    <dd>Array of individual response objects when using Multiple Service Packet.</dd>
+  </dl>
+  <h3>Details</h3>
+  <p>For advanced users who need to send CIP services not covered by the read/write nodes.
+  All fields accept hex values. Override any field via the incoming message properties.</p>
+  <p>Enable the <b>Connected</b> checkbox to use connected messaging (ForwardOpen) instead of
+  unconnected messaging (UCMM). Connected messaging provides better performance for repeated requests.</p>
+  <h3>Multiple Service Packet</h3>
+  <p>To send multiple CIP requests in a single packet, set <code>msg.requests</code> to an array of
+  request objects. Each object uses the same format as the individual fields (<code>service</code>,
+  <code>classId</code>, <code>instanceId</code>, <code>attributeId</code>, <code>data</code>).
+  The response <code>msg.payload.responses</code> will contain the individual results.</p>
+</script>

@@ -1,0 +1,78 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-controller", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      endpoint: { value: "", type: "cip-endpoint", required: true },
+      pollInterval: { value: 0 }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "cip controller",
+    label: function () {
+      return this.name || "controller";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-controller">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
+    <input type="number" id="node-input-pollInterval" placeholder="0 = trigger only" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-controller">
+  <p>Reads controller properties and status from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
+  <h3>Inputs</h3>
+  <p>Any incoming message triggers a controller info read.</p>
+  <dl class="message-properties">
+    <dt>command <span class="property-type">string</span></dt>
+    <dd>Optional command: <code>"getProps"</code> to read controller properties,
+    <code>"getStatus"</code> to read status only, <code>"getFaults"</code> to read fault log.</dd>
+  </dl>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload.name <span class="property-type">string</span></dt>
+    <dd>Controller name (project name).</dd>
+    <dt>payload.serial <span class="property-type">string</span></dt>
+    <dd>Controller serial number.</dd>
+    <dt>payload.firmware <span class="property-type">string</span></dt>
+    <dd>Firmware revision (major.minor).</dd>
+    <dt>payload.status <span class="property-type">number</span></dt>
+    <dd>Controller status word.</dd>
+    <dt>payload.runMode <span class="property-type">string</span></dt>
+    <dd>Current run mode: <code>"RUN"</code>, <code>"PROGRAM"</code>, <code>"REMOTE"</code>, or <code>"FAULTED"</code>.</dd>
+    <dt>payload.faulted <span class="property-type">boolean</span></dt>
+    <dd>Whether the controller is in a faulted state.</dd>
+    <dt>payload.vendor <span class="property-type">string</span></dt>
+    <dd>Vendor name.</dd>
+    <dt>payload.productType <span class="property-type">string</span></dt>
+    <dd>Product type description.</dd>
+    <dt>timestamp <span class="property-type">number</span></dt>
+    <dd>Unix timestamp (ms) of the read.</dd>
+  </dl>
+  <h3>Details</h3>
+  <p>Set a <b>Poll</b> interval (in milliseconds) for periodic status reads, or leave at 0 for
+  trigger-only mode. This is useful for monitoring PLC health and run state.</p>
+  <h3>Commands</h3>
+  <p>Send <code>msg.command</code> to request specific information:</p>
+  <ul>
+    <li><code>"getProps"</code> - Full controller properties (name, serial, firmware, vendor)</li>
+    <li><code>"getStatus"</code> - Status and run mode only (lighter request)</li>
+    <li><code>"getFaults"</code> - Read the controller fault log</li>
+  </ul>
+  <h3>Metrics</h3>
+  <p>The node tracks connection uptime, request count, and error count in the node status.
+  Use this node alongside dashboard nodes to build PLC health monitoring views.</p>
+</script>

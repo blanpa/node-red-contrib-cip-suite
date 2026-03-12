@@ -1,0 +1,16 @@
+src/
+test/
+simulator/
+docker/
+docker-compose.yml
+examples/
+coverage/
+.dockerignore
+.github/
+tsconfig.json
+jest.config.js
+test-micro850-raw.js
+*.ts
+*.tgz
+.env
+.DS_Store

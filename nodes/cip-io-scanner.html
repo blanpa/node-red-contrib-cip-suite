@@ -1,0 +1,102 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-io-scanner", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      targetAddress: { value: "", required: true },
+      targetPort: { value: "44818" },
+      rpi: { value: "100" },
+      inputAssembly: { value: "100" },
+      outputAssembly: { value: "150" },
+      configAssembly: { value: "0" },
+      inputSize: { value: "32" },
+      outputSize: { value: "32" },
+      udpPort: { value: "2222" }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "cip I/O scanner",
+    label: function () {
+      return this.name || this.targetAddress || "I/O scanner";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-io-scanner">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-targetAddress"><i class="fa fa-globe"></i> Target IP</label>
+    <input type="text" id="node-input-targetAddress" placeholder="192.168.1.100" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-targetPort"><i class="fa fa-plug"></i> Port</label>
+    <input type="text" id="node-input-targetPort" placeholder="44818" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-rpi"><i class="fa fa-clock-o"></i> RPI (ms)</label>
+    <input type="text" id="node-input-rpi" placeholder="100" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-inputAssembly"><i class="fa fa-sign-in"></i> Input Assembly</label>
+    <input type="text" id="node-input-inputAssembly" placeholder="100" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-outputAssembly"><i class="fa fa-sign-out"></i> Output Assembly</label>
+    <input type="text" id="node-input-outputAssembly" placeholder="150" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-configAssembly"><i class="fa fa-cog"></i> Config Assembly</label>
+    <input type="text" id="node-input-configAssembly" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-inputSize"><i class="fa fa-download"></i> Input Size (bytes)</label>
+    <input type="text" id="node-input-inputSize" placeholder="32" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-outputSize"><i class="fa fa-upload"></i> Output Size (bytes)</label>
+    <input type="text" id="node-input-outputSize" placeholder="32" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-udpPort"><i class="fa fa-random"></i> UDP Port</label>
+    <input type="text" id="node-input-udpPort" placeholder="2222" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-io-scanner">
+  <p>I/O Scanner node for implicit (UDP Class 1) messaging with remote I/O modules,
+  drives, and other EtherNet/IP adapters.</p>
+
+  <h3>Configuration</h3>
+  <dl class="message-properties">
+    <dt>Target IP <span class="property-type">string</span></dt>
+    <dd>IP address of the target I/O adapter device.</dd>
+    <dt>RPI <span class="property-type">number</span></dt>
+    <dd>Requested Packet Interval in milliseconds. This is the cyclic data exchange rate.</dd>
+    <dt>Input/Output Assembly <span class="property-type">number</span></dt>
+    <dd>Assembly instance numbers. Check your device EDS file or documentation.</dd>
+    <dt>Input/Output Size <span class="property-type">number</span></dt>
+    <dd>Data sizes in bytes.</dd>
+  </dl>
+
+  <h3>Inputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">Buffer</span></dt>
+    <dd>Output data to send to the I/O device.</dd>
+    <dt>command <span class="property-type">string</span></dt>
+    <dd><code>"start"</code> or <code>"stop"</code> I/O scanning.</dd>
+  </dl>
+
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">object</span></dt>
+    <dd><code>{ input: Buffer, timestamp: number }</code></dd>
+  </dl>
+
+  <h3>Supported Devices</h3>
+  <p>1734 POINT I/O, PowerFlex drives, Kinetix servos, any EtherNet/IP adapter with implicit messaging.</p>
+</script>

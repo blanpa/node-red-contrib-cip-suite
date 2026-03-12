@@ -1,0 +1,40 @@
+<script type="text/javascript">
+  RED.nodes.registerType('cip-file', {
+    category: 'CIP Suite',
+    color: '#999999',
+    defaults: {
+      name: {value: ""},
+      endpoint: {value: "", type: "cip-endpoint"},
+      fileInstance: {value: "1"}
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    label: function() { return this.name || "CIP File"; },
+    paletteLabel: "cip file"
+  });
+</script>
+<script type="text/html" data-template-name="cip-file">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="CIP File">
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-plug"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint">
+  </div>
+  <div class="form-row">
+    <label for="node-input-fileInstance"><i class="fa fa-file"></i> File Instance</label>
+    <input type="text" id="node-input-fileInstance" placeholder="1">
+  </div>
+</script>
+<script type="text/html" data-help-name="cip-file">
+  <p>CIP File Object — firmware upload/download (ODVA Volume 1, Ch.7-31).</p>
+  <h3>Commands (msg.command):</h3>
+  <ul>
+    <li><b>info</b> — Read file metadata (name, size, checksum, state)</li>
+    <li><b>list</b> — List all file instances</li>
+    <li><b>upload</b> — Upload file from device (set msg.savePath to save)</li>
+    <li><b>download</b> — Download file to device (msg.payload = Buffer or path)</li>
+  </ul>
+</script>

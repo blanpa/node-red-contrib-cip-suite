@@ -1,0 +1,95 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-browse", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      endpoint: { value: "", type: "cip-endpoint", required: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "cip browse",
+    label: function () {
+      return this.name || "cip browse";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-browse">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint" />
+  </div>
+  <div class="form-row">
+    <button type="button" id="node-input-browse-btn" class="red-ui-button" style="width:auto">
+      <i class="fa fa-search"></i> Preview tags
+    </button>
+    <span id="node-input-browse-status" style="margin-left:8px; color:#888;"></span>
+  </div>
+  <div class="form-row" id="node-input-taglist-row" style="display:none;">
+    <label><i class="fa fa-list"></i> Tags</label>
+    <select id="node-input-taglist" size="10" style="width:70%; font-family:monospace;" disabled></select>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-browse">
+  <p>Browses available tags on an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
+  <h3>Inputs</h3>
+  <p>Any incoming message triggers a tag browse operation.</p>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">array</span></dt>
+    <dd>Array of tag objects, each with <code>name</code>, <code>type</code>, <code>dimensions</code>, and <code>program</code> properties.</dd>
+    <dt>timestamp <span class="property-type">number</span></dt>
+    <dd>Unix timestamp (ms) of the browse.</dd>
+  </dl>
+  <h3>Details</h3>
+  <p>Retrieves the full tag list from the PLC controller. Backpressure is applied: concurrent browse requests are dropped.</p>
+  <p>Use the <b>Preview tags</b> button in the node settings to see available tags before deploying.
+  The endpoint must be deployed and connected first.</p>
+</script>
+
+<script type="text/javascript">
+  (function () {
+    $(document).on("click", "#node-input-browse-btn", function () {
+      var endpointId = $("#node-input-endpoint").val();
+      if (!endpointId || endpointId === "_ADD_") {
+        RED.notify("Select and deploy an endpoint first.", "warning");
+        return;
+      }
+      var btn = $(this);
+      var status = $("#node-input-browse-status");
+      btn.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
+      status.text("Loading...");
+      $.getJSON("cip-endpoint/" + endpointId + "/browse")
+        .done(function (tags) {
+          var sel = $("#node-input-taglist");
+          sel.empty();
+          if (!tags.length) {
+            sel.append('<option disabled>No tags found</option>');
+            status.text("No tags found");
+          } else {
+            tags.forEach(function (t) {
+              var label = t.name + (t.type ? "  (" + t.type + ")" : "");
+              sel.append($("<option>").text(label));
+            });
+            status.text(tags.length + " tags");
+          }
+          $("#node-input-taglist-row").slideDown(200);
+        })
+        .fail(function (xhr) {
+          var msg = xhr.responseJSON ? xhr.responseJSON.error : "Browse failed";
+          RED.notify(msg, "error");
+          status.text("");
+        })
+        .always(function () {
+          btn.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
+        });
+    });
+  })();
+</script>

@@ -1,0 +1,10 @@
+{
+  "name": "cip-plc-simulator",
+  "version": "1.0.0",
+  "description": "Mock Allen-Bradley PLC simulator for testing node-red-contrib-cip-suite",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}

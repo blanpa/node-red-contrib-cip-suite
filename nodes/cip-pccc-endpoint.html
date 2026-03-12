@@ -1,0 +1,55 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-pccc-endpoint", {
+    category: "config",
+    defaults: {
+      name: { value: "" },
+      address: { value: "", required: true },
+      port: { value: 44818 },
+      connTimeout: { value: 5000 },
+      retryInterval: { value: 5000 }
+    },
+    label: function () {
+      return this.name || this.address;
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-pccc-endpoint">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-address"><i class="fa fa-globe"></i> IP Address</label>
+    <input type="text" id="node-config-input-address" placeholder="192.168.1.1" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
+    <input type="number" id="node-config-input-port" placeholder="44818" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-connTimeout"><i class="fa fa-clock-o"></i> Timeout (ms)</label>
+    <input type="number" id="node-config-input-connTimeout" placeholder="5000" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-retryInterval"><i class="fa fa-refresh"></i> Retry (ms)</label>
+    <input type="number" id="node-config-input-retryInterval" placeholder="5000" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-pccc-endpoint">
+  <p>Configuration node for PCCC over EtherNet/IP connections.</p>
+  <h3>Details</h3>
+  <p>This endpoint manages a TCP connection to a legacy Allen-Bradley PLC that uses the
+  PCCC (Programmable Controller Communication Commands) protocol encapsulated in EtherNet/IP (CIP).</p>
+  <h3>Supported PLCs</h3>
+  <ul>
+    <li><b>SLC 500</b> - SLC 5/05 with Ethernet module</li>
+    <li><b>MicroLogix</b> - MicroLogix 1100, 1400 with built-in Ethernet</li>
+    <li><b>PLC-5</b> - PLC-5 with Ethernet module (1785-ENET)</li>
+  </ul>
+  <p>These PLCs use the older PCCC file-based addressing format (e.g. N7:0, F8:0) rather than
+  the tag-based addressing used by ControlLogix and CompactLogix. The connection uses standard
+  EtherNet/IP port 44818 with PCCC commands encapsulated in CIP messages.</p>
+  <p>The node manages automatic reconnection with the configured retry interval.</p>
+</script>

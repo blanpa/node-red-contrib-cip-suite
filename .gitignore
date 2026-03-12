@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+*.js.map
+*.tgz
+.env
+.DS_Store

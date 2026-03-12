@@ -1,0 +1,46 @@
+<script type="text/javascript">
+  RED.nodes.registerType('cip-energy', {
+    category: 'CIP Suite',
+    color: '#999999',
+    defaults: {
+      name: {value: ""},
+      endpoint: {value: "", type: "cip-endpoint"},
+      instance: {value: "1"},
+      pollInterval: {value: "0"}
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    label: function() { return this.name || "CIP Energy"; },
+    paletteLabel: "cip energy"
+  });
+</script>
+<script type="text/html" data-template-name="cip-energy">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="CIP Energy">
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-plug"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint">
+  </div>
+  <div class="form-row">
+    <label for="node-input-instance"><i class="fa fa-hashtag"></i> Instance</label>
+    <input type="text" id="node-input-instance" placeholder="1">
+  </div>
+  <div class="form-row">
+    <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
+    <input type="text" id="node-input-pollInterval" placeholder="0 = on trigger only">
+  </div>
+</script>
+<script type="text/html" data-help-name="cip-energy">
+  <p>CIP Energy — power/energy management (ODVA Volume 2, Ch.4-15).</p>
+  <h3>Commands (msg.command):</h3>
+  <ul>
+    <li><b>status</b> — Read base energy status (power, energy, mode)</li>
+    <li><b>electrical</b> — Read electrical measurements (V, A, Hz, PF, W, kWh)</li>
+    <li><b>setMode</b> — Set energy mode (msg.payload.mode: 0-3)</li>
+    <li><b>normal/saving/off/pause</b> — Shorthand mode commands</li>
+    <li><b>resetPeak</b> — Reset peak power measurement</li>
+  </ul>
+</script>

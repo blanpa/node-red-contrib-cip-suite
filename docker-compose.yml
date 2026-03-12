@@ -1,0 +1,116 @@
+services:
+  # Allen-Bradley ControlLogix L85E (default)
+  plc-controllogix:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: cip-plc-controllogix
+    ports:
+      - "44818:44818"
+    environment:
+      - EIP_PORT=44818
+      - PLC_TYPE=controllogix
+    healthcheck:
+      test: ["CMD", "node", "-e", "const n=require('net');const c=n.connect(44818,'127.0.0.1',()=>{c.destroy();process.exit(0)});c.on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  # Allen-Bradley CompactLogix 5380
+  plc-compactlogix:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: cip-plc-compactlogix
+    ports:
+      - "44819:44818"
+    environment:
+      - EIP_PORT=44818
+      - PLC_TYPE=compactlogix
+    healthcheck:
+      test: ["CMD", "node", "-e", "const n=require('net');const c=n.connect(44818,'127.0.0.1',()=>{c.destroy();process.exit(0)});c.on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  # Allen-Bradley Micro850 (no backplane, UCMM only)
+  plc-micro800:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: cip-plc-micro800
+    ports:
+      - "44820:44818"
+    environment:
+      - EIP_PORT=44818
+      - PLC_TYPE=micro800
+    healthcheck:
+      test: ["CMD", "node", "-e", "const n=require('net');const c=n.connect(44818,'127.0.0.1',()=>{c.destroy();process.exit(0)});c.on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  # Allen-Bradley MicroLogix 1400 (PCCC + limited CIP)
+  plc-micrologix:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: cip-plc-micrologix
+    ports:
+      - "44821:44818"
+    environment:
+      - EIP_PORT=44818
+      - PLC_TYPE=micrologix
+    healthcheck:
+      test: ["CMD", "node", "-e", "const n=require('net');const c=n.connect(44818,'127.0.0.1',()=>{c.destroy();process.exit(0)});c.on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  # Allen-Bradley PLC-5 (PCCC only)
+  plc-plc5:
+    build:
+      context: ./simulator
+      dockerfile: Dockerfile
+    container_name: cip-plc-plc5
+    ports:
+      - "44822:44818"
+    environment:
+      - EIP_PORT=44818
+      - PLC_TYPE=plc5
+    healthcheck:
+      test: ["CMD", "node", "-e", "const n=require('net');const c=n.connect(44818,'127.0.0.1',()=>{c.destroy();process.exit(0)});c.on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  node-red:
+    build:
+      context: .
+      dockerfile: docker/node-red/Dockerfile
+    container_name: cip-node-red
+    ports:
+      - "${NODERED_PORT:-11880}:1880"
+    environment:
+      - TZ=Europe/Berlin
+    depends_on:
+      plc-controllogix:
+        condition: service_healthy
+      plc-compactlogix:
+        condition: service_healthy
+      plc-micro800:
+        condition: service_healthy
+      plc-micrologix:
+        condition: service_healthy
+      plc-plc5:
+        condition: service_healthy
+    volumes:
+      - node-red-data:/data
+
+volumes:
+  node-red-data:

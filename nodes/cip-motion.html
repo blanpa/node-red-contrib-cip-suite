@@ -1,0 +1,56 @@
+<script type="text/javascript">
+  RED.nodes.registerType('cip-motion', {
+    category: 'CIP Suite',
+    color: '#999999',
+    defaults: {
+      name: {value: ""},
+      endpoint: {value: "", type: "cip-endpoint"},
+      axisInstance: {value: "1"},
+      groupInstance: {value: "1"},
+      pollInterval: {value: "0"}
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    label: function() { return this.name || "CIP Motion"; },
+    paletteLabel: "cip motion"
+  });
+</script>
+<script type="text/html" data-template-name="cip-motion">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="CIP Motion">
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-plug"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint">
+  </div>
+  <div class="form-row">
+    <label for="node-input-axisInstance"><i class="fa fa-arrows"></i> Axis Instance</label>
+    <input type="text" id="node-input-axisInstance" placeholder="1">
+  </div>
+  <div class="form-row">
+    <label for="node-input-groupInstance"><i class="fa fa-object-group"></i> Group Instance</label>
+    <input type="text" id="node-input-groupInstance" placeholder="1">
+  </div>
+  <div class="form-row">
+    <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
+    <input type="text" id="node-input-pollInterval" placeholder="0 = on trigger only">
+  </div>
+</script>
+<script type="text/html" data-help-name="cip-motion">
+  <p>CIP Motion — axis control via Motion Axis Object (ODVA Volume 9).</p>
+  <h3>Commands (msg.command):</h3>
+  <ul>
+    <li><b>status</b> — Read axis position, velocity, state, faults</li>
+    <li><b>jog</b> — Jog axis (msg.payload.velocity, msg.payload.direction)</li>
+    <li><b>moveAbsolute</b> — Move to position (msg.payload.position, speed)</li>
+    <li><b>moveRelative</b> — Move by distance (msg.payload.distance, speed)</li>
+    <li><b>home</b> — Initiate homing sequence</li>
+    <li><b>stop</b> — Stop axis</li>
+    <li><b>enable/disable</b> — Enable/disable axis</li>
+    <li><b>resetFault</b> — Clear axis faults</li>
+    <li><b>changeSpeed</b> — Change speed (msg.payload.speed)</li>
+    <li><b>setGearRatio</b> — Set gear ratio (msg.payload.input/output)</li>
+  </ul>
+</script>

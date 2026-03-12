@@ -1,0 +1,68 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-discover", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      broadcastAddress: { value: "255.255.255.255" },
+      timeout: { value: 3000 }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "cip discover",
+    label: function () {
+      return this.name || "discover";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-discover">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-broadcastAddress"><i class="fa fa-globe"></i> Broadcast Address</label>
+    <input type="text" id="node-input-broadcastAddress" placeholder="255.255.255.255" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout (ms)</label>
+    <input type="number" id="node-input-timeout" placeholder="3000" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-discover">
+  <p>Discovers EtherNet/IP devices on the network using the CIP ListIdentity broadcast.</p>
+  <h3>Inputs</h3>
+  <p>Any incoming message triggers a discovery scan.</p>
+  <dl class="message-properties">
+    <dt>address <span class="property-type">string</span></dt>
+    <dd>Optional. Override the broadcast address to target a specific subnet or IP for directed discovery.</dd>
+    <dt>timeout <span class="property-type">number</span></dt>
+    <dd>Optional. Override the timeout in milliseconds.</dd>
+  </dl>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">array</span></dt>
+    <dd>Array of discovered device objects, each containing:
+      <ul>
+        <li><code>address</code> - IP address of the device</li>
+        <li><code>vendor</code> - Vendor name/ID</li>
+        <li><code>deviceType</code> - Device type</li>
+        <li><code>productName</code> - Product name string</li>
+        <li><code>serialNumber</code> - Device serial number</li>
+        <li><code>firmware</code> - Firmware revision</li>
+        <li><code>status</code> - Device status word</li>
+      </ul>
+    </dd>
+    <dt>timestamp <span class="property-type">number</span></dt>
+    <dd>Unix timestamp (ms) of the discovery.</dd>
+  </dl>
+  <h3>Details</h3>
+  <p>Sends a UDP ListIdentity broadcast on port 44818 (EtherNet/IP) and collects responses within
+  the timeout period. All EtherNet/IP-capable devices on the network should respond, including
+  Allen-Bradley ControlLogix, CompactLogix, Micro800, and third-party CIP devices.</p>
+  <p>This node does <b>not</b> require a CIP endpoint configuration since it uses a standalone
+  UDP broadcast. Set <code>msg.address</code> to a specific IP for targeted (unicast) discovery.</p>
+</script>

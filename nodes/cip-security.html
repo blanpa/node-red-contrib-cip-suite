@@ -1,0 +1,64 @@
+<script type="text/javascript">
+  RED.nodes.registerType('cip-security', {
+    category: 'CIP Suite',
+    color: '#999999',
+    defaults: {
+      name: {value: ""},
+      endpoint: {value: "", type: "cip-endpoint"},
+      securityMode: {value: "none"},
+      certPath: {value: ""},
+      keyPath: {value: ""},
+      caPath: {value: ""},
+      tlsPort: {value: "2221"}
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    label: function() { return this.name || "CIP Security"; },
+    paletteLabel: "cip security"
+  });
+</script>
+<script type="text/html" data-template-name="cip-security">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="CIP Security">
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-plug"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint">
+  </div>
+  <div class="form-row">
+    <label for="node-input-securityMode"><i class="fa fa-lock"></i> Mode</label>
+    <select id="node-input-securityMode">
+      <option value="none">None (read status only)</option>
+      <option value="integrity">EtherNet/IP Integrity</option>
+      <option value="confidentiality">EtherNet/IP Confidentiality</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-tlsPort"><i class="fa fa-hashtag"></i> TLS Port</label>
+    <input type="text" id="node-input-tlsPort" placeholder="2221">
+  </div>
+  <div class="form-row">
+    <label for="node-input-certPath"><i class="fa fa-certificate"></i> Certificate</label>
+    <input type="text" id="node-input-certPath" placeholder="/path/to/cert.pem">
+  </div>
+  <div class="form-row">
+    <label for="node-input-keyPath"><i class="fa fa-key"></i> Key</label>
+    <input type="text" id="node-input-keyPath" placeholder="/path/to/key.pem">
+  </div>
+  <div class="form-row">
+    <label for="node-input-caPath"><i class="fa fa-shield"></i> CA Cert</label>
+    <input type="text" id="node-input-caPath" placeholder="/path/to/ca.pem">
+  </div>
+</script>
+<script type="text/html" data-help-name="cip-security">
+  <p>CIP Security (ODVA Volume 8) — TLS/DTLS for EtherNet/IP.</p>
+  <h3>Commands (msg.command):</h3>
+  <ul>
+    <li><b>status</b> — Read CIP Security Object attributes</li>
+    <li><b>connect-tls</b> — Establish TLS connection</li>
+    <li><b>disconnect-tls</b> — Close TLS connection</li>
+    <li><b>getProfiles</b> — List supported security profiles</li>
+  </ul>
+</script>

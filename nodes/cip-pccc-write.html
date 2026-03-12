@@ -1,0 +1,79 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-pccc-write", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      endpoint: { value: "", type: "cip-pccc-endpoint", required: true },
+      address: { value: "N7:0" },
+      staticValue: { value: "" },
+      useStaticValue: { value: false }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "pccc write",
+    label: function () {
+      return this.name || this.address || "pccc write";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-pccc-write">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-address"><i class="fa fa-bookmark"></i> Address</label>
+    <input type="text" id="node-input-address" placeholder="N7:0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-useStaticValue"><i class="fa fa-pencil"></i> Static Value</label>
+    <input type="checkbox" id="node-input-useStaticValue" style="width:auto" />
+    <span>Use static value instead of msg.payload</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-staticValue"><i class="fa fa-pencil-square-o"></i> Value</label>
+    <input type="text" id="node-input-staticValue" placeholder="Static value" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-pccc-write">
+  <p>Writes a value to a legacy Allen-Bradley PLC (SLC 500, MicroLogix, PLC-5) using PCCC over EtherNet/IP.</p>
+  <h3>Inputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">*</span></dt>
+    <dd>The value to write (unless static value is configured).</dd>
+    <dt>address <span class="property-type">string</span></dt>
+    <dd>Optional override for the configured address.</dd>
+  </dl>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload.success <span class="property-type">boolean</span></dt>
+    <dd>Whether the write was successful.</dd>
+    <dt>payload.address <span class="property-type">string</span></dt>
+    <dd>The address that was written.</dd>
+    <dt>payload.timestamp <span class="property-type">number</span></dt>
+    <dd>Unix timestamp (ms) of the write.</dd>
+  </dl>
+  <h3>Details</h3>
+  <p>Writes a value to the specified PCCC address. The data type is determined automatically from
+  the address prefix (N = integer, F = float, B = binary, etc.).</p>
+  <h3>Static Value</h3>
+  <p>Enable <b>Static Value</b> to always write the configured value regardless of <code>msg.payload</code>.
+  This is useful for reset buttons, initialization flows, or fixed setpoints.</p>
+  <h3>Bit Writes</h3>
+  <p>To write individual bits, use bit-level addressing:</p>
+  <ul>
+    <li><code>B3:0/5</code> - Write bit 5 of binary file 3, element 0</li>
+    <li><code>O:0/3</code> - Write output bit 3</li>
+    <li><code>N7:0/15</code> - Write bit 15 of integer N7:0</li>
+  </ul>
+  <p>Set <code>msg.payload</code> to <code>true</code>/<code>false</code> or <code>1</code>/<code>0</code> for bit writes.</p>
+  <p>Backpressure is applied: if a write is already in-flight, subsequent messages are dropped with a warning.</p>
+</script>

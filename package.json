@@ -1,0 +1,82 @@
+{
+  "name": "node-red-contrib-cip-suite",
+  "version": "0.0.1",
+  "description": "Comprehensive Node-RED nodes for Allen-Bradley and CIP-capable devices via EtherNet/IP — ControlLogix, CompactLogix, Micro800, SLC500, MicroLogix, PLC-5, and third-party CIP devices",
+  "license": "MIT",
+  "author": "blanpa",
+  "keywords": [
+    "node-red",
+    "ethernet-ip",
+    "cip",
+    "allen-bradley",
+    "rockwell",
+    "plc",
+    "controllogix",
+    "compactlogix",
+    "micro800",
+    "micro850",
+    "slc500",
+    "micrologix",
+    "plc5",
+    "pccc",
+    "industrial",
+    "automation",
+    "scada",
+    "iiot",
+    "iot",
+    "hmi",
+    "cip-security",
+    "cip-motion",
+    "cip-sync",
+    "cip-energy",
+    "ieee-1588",
+    "ptp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blanpa/node-red-contrib-cip-suite.git"
+  },
+  "node-red": {
+    "version": ">=2.0.0",
+    "nodes": {
+      "cip-endpoint": "nodes/cip-endpoint.js",
+      "cip-read": "nodes/cip-read.js",
+      "cip-write": "nodes/cip-write.js",
+      "cip-browse": "nodes/cip-browse.js",
+      "cip-raw": "nodes/cip-raw.js",
+      "cip-subscribe": "nodes/cip-subscribe.js",
+      "cip-discover": "nodes/cip-discover.js",
+      "cip-controller": "nodes/cip-controller.js",
+      "cip-pccc-endpoint": "nodes/cip-pccc-endpoint.js",
+      "cip-pccc-read": "nodes/cip-pccc-read.js",
+      "cip-pccc-write": "nodes/cip-pccc-write.js",
+      "cip-io-scanner": "nodes/cip-io-scanner.js",
+      "cip-security": "nodes/cip-security.js",
+      "cip-sync": "nodes/cip-sync.js",
+      "cip-motion": "nodes/cip-motion.js",
+      "cip-energy": "nodes/cip-energy.js",
+      "cip-file": "nodes/cip-file.js",
+      "cip-param": "nodes/cip-param.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "prepublishOnly": "npm run build",
+    "clean": "rm -f nodes/*.js nodes/*.js.map",
+    "test": "jest --verbose"
+  },
+  "dependencies": {
+    "st-ethernet-ip": "^2.7.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.37",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

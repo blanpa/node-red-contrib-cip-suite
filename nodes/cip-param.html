@@ -1,0 +1,39 @@
+<script type="text/javascript">
+  RED.nodes.registerType('cip-param', {
+    category: 'CIP Suite',
+    color: '#999999',
+    defaults: {
+      name: {value: ""},
+      endpoint: {value: "", type: "cip-endpoint"},
+      paramInstance: {value: ""}
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    label: function() { return this.name || "CIP Parameter"; },
+    paletteLabel: "cip param"
+  });
+</script>
+<script type="text/html" data-template-name="cip-param">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="CIP Parameter">
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-plug"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint">
+  </div>
+  <div class="form-row">
+    <label for="node-input-paramInstance"><i class="fa fa-sliders"></i> Param Instance</label>
+    <input type="text" id="node-input-paramInstance" placeholder="Instance # (or leave empty for discover)">
+  </div>
+</script>
+<script type="text/html" data-help-name="cip-param">
+  <p>CIP Parameter Object — device parameter access (ODVA Volume 1, Ch.7-16).</p>
+  <h3>Commands (msg.command):</h3>
+  <ul>
+    <li><b>read</b> — Read parameter value, name, units, min/max, scaling</li>
+    <li><b>write</b> — Write parameter value (msg.payload = value)</li>
+    <li><b>discover</b> — List all available parameters with metadata</li>
+  </ul>
+</script>

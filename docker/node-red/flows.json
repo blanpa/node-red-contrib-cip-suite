@@ -1,0 +1,252 @@
+[
+  {"id":"tab_clx","type":"tab","label":"ControlLogix L85E","disabled":false,"info":"Full CIP: all node types"},
+  {"id":"tab_cplx","type":"tab","label":"CompactLogix 5380","disabled":false,"info":"Full CIP: all node types"},
+  {"id":"tab_micro800","type":"tab","label":"Micro850","disabled":false,"info":"UCMM only, no ForwardOpen"},
+  {"id":"tab_mlx","type":"tab","label":"MicroLogix 1400","disabled":false,"info":"PCCC register files"},
+  {"id":"tab_plc5","type":"tab","label":"PLC-5/40E","disabled":false,"info":"PCCC only"},
+  {"id":"tab_discover","type":"tab","label":"Discover","disabled":false,"info":"Network discovery (standalone)"},
+
+  {"id":"ep_clx","type":"cip-endpoint","name":"ControlLogix L85E","address":"plc-controllogix","port":"44818","slot":"0","connTimeout":"5000","retryInterval":"3000","useMicro800":false},
+  {"id":"ep_cplx","type":"cip-endpoint","name":"CompactLogix 5380","address":"plc-compactlogix","port":"44818","slot":"0","connTimeout":"5000","retryInterval":"3000","useMicro800":false},
+  {"id":"ep_micro800","type":"cip-endpoint","name":"Micro850","address":"plc-micro800","port":"44818","slot":"0","connTimeout":"5000","retryInterval":"3000","useMicro800":true},
+  {"id":"ep_mlx","type":"cip-pccc-endpoint","name":"MicroLogix 1400","address":"plc-micrologix","port":"44818","connTimeout":"5000","retryInterval":"3000"},
+  {"id":"ep_plc5","type":"cip-pccc-endpoint","name":"PLC-5/40E","address":"plc-plc5","port":"44818","connTimeout":"5000","retryInterval":"3000"},
+
+
+
+  {"id":"clx_c1","type":"comment","name":"── READ / WRITE ──","x":120,"y":40,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_read","type":"inject","name":"Read MyDint","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"5","topic":"","x":160,"y":80,"z":"tab_clx","wires":[["clx_read"]]},
+  {"id":"clx_read","type":"cip-read","name":"MyDint","endpoint":"ep_clx","tagName":"MyDint","dataType":"auto","pollInterval":"0","x":370,"y":80,"z":"tab_clx","wires":[["clx_dbg1"]]},
+  {"id":"clx_dbg1","type":"debug","name":"Read","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":80,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_inj_poll","type":"inject","name":"Poll Temp","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"6","topic":"","x":150,"y":130,"z":"tab_clx","wires":[["clx_poll"]]},
+  {"id":"clx_poll","type":"cip-read","name":"Temperature","endpoint":"ep_clx","tagName":"Temperature","dataType":"auto","pollInterval":"2000","x":390,"y":130,"z":"tab_clx","wires":[["clx_dbg2"]]},
+  {"id":"clx_dbg2","type":"debug","name":"Temp","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":130,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_inj_arr","type":"inject","name":"Read MyIntArray","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":170,"y":180,"z":"tab_clx","wires":[["clx_arr"]]},
+  {"id":"clx_arr","type":"cip-read","name":"MyIntArray","endpoint":"ep_clx","tagName":"MyIntArray","dataType":"auto","pollInterval":"0","x":380,"y":180,"z":"tab_clx","wires":[["clx_dbg3"]]},
+  {"id":"clx_dbg3","type":"debug","name":"Array","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":180,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_inj_prog","type":"inject","name":"Program:MainProgram.Speed","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":210,"y":230,"z":"tab_clx","wires":[["clx_prog"]]},
+  {"id":"clx_prog","type":"cip-read","name":"Prog Speed","endpoint":"ep_clx","tagName":"Program:MainProgram.Speed","dataType":"auto","pollInterval":"0","x":390,"y":230,"z":"tab_clx","wires":[["clx_dbg4"]]},
+  {"id":"clx_dbg4","type":"debug","name":"ProgTag","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":230,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_inj_w42","type":"inject","name":"Write 42","props":[{"p":"payload","v":"42","vt":"num"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":290,"z":"tab_clx","wires":[["clx_write"]]},
+  {"id":"clx_write","type":"cip-write","name":"MyDint","endpoint":"ep_clx","tagName":"MyDint","dataType":"auto","staticValue":"","useStaticValue":false,"x":370,"y":290,"z":"tab_clx","wires":[["clx_dbg5"]]},
+  {"id":"clx_dbg5","type":"debug","name":"Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":290,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_inj_mon","type":"inject","name":"Motor ON","props":[{"p":"payload","v":"true","vt":"bool"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":340,"z":"tab_clx","wires":[["clx_wmotor"]]},
+  {"id":"clx_inj_moff","type":"inject","name":"Motor OFF","props":[{"p":"payload","v":"false","vt":"bool"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":380,"z":"tab_clx","wires":[["clx_wmotor"]]},
+  {"id":"clx_wmotor","type":"cip-write","name":"MotorRunning","endpoint":"ep_clx","tagName":"MotorRunning","dataType":"auto","staticValue":"","useStaticValue":false,"x":400,"y":360,"z":"tab_clx","wires":[["clx_dbg6"]]},
+  {"id":"clx_dbg6","type":"debug","name":"Motor","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":580,"y":360,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c2","type":"comment","name":"── BROWSE ──","x":120,"y":440,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_br","type":"inject","name":"Browse","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":140,"y":480,"z":"tab_clx","wires":[["clx_browse"]]},
+  {"id":"clx_browse","type":"cip-browse","name":"Browse","endpoint":"ep_clx","x":340,"y":480,"z":"tab_clx","wires":[["clx_dbg7"]]},
+  {"id":"clx_dbg7","type":"debug","name":"Tags","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":480,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c3","type":"comment","name":"── SUBSCRIBE (multi-tag poll via MSP) ──","x":210,"y":530,"z":"tab_clx","wires":[]},
+  {"id":"clx_sub","type":"cip-subscribe","name":"Counter+Temp","endpoint":"ep_clx","scanRate":"2000","deadband":"0","diffOnly":false,"tags":"Counter,Temperature","x":400,"y":570,"z":"tab_clx","wires":[["clx_dbg8"]]},
+  {"id":"clx_dbg8","type":"debug","name":"Subscribe","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":590,"y":570,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c4","type":"comment","name":"── CONTROLLER INFO ──","x":150,"y":620,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_ctrl","type":"inject","name":"Get status","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":660,"z":"tab_clx","wires":[["clx_ctrl"]]},
+  {"id":"clx_ctrl","type":"cip-controller","name":"Controller","endpoint":"ep_clx","pollInterval":"0","x":370,"y":660,"z":"tab_clx","wires":[["clx_dbg9"]]},
+  {"id":"clx_dbg9","type":"debug","name":"Ctrl","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":660,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c5","type":"comment","name":"── RAW CIP (Identity Object) ──","x":180,"y":710,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_raw","type":"inject","name":"GetAttrAll Identity","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":180,"y":750,"z":"tab_clx","wires":[["clx_raw"]]},
+  {"id":"clx_raw","type":"cip-raw","name":"Identity 0x01","endpoint":"ep_clx","service":"01","classId":"01","instanceId":"00","attributeId":"","useConnected":false,"x":390,"y":750,"z":"tab_clx","wires":[["clx_dbg10"]]},
+  {"id":"clx_dbg10","type":"debug","name":"Raw","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":750,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c6","type":"comment","name":"── MOTION AXIS ──","x":140,"y":800,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_mot","type":"inject","name":"Read axis","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":840,"z":"tab_clx","wires":[["clx_motion"]]},
+  {"id":"clx_motion","type":"cip-motion","name":"Axis 1","endpoint":"ep_clx","axisInstance":"1","groupInstance":"1","pollInterval":"0","x":360,"y":840,"z":"tab_clx","wires":[["clx_dbg11"]]},
+  {"id":"clx_dbg11","type":"debug","name":"Motion","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":840,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c7","type":"comment","name":"── TIME SYNC (PTP) ──","x":150,"y":890,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_sync","type":"inject","name":"Read PTP","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":930,"z":"tab_clx","wires":[["clx_sync"]]},
+  {"id":"clx_sync","type":"cip-sync","name":"PTP Sync","endpoint":"ep_clx","pollInterval":"0","x":370,"y":930,"z":"tab_clx","wires":[["clx_dbg12"]]},
+  {"id":"clx_dbg12","type":"debug","name":"Sync","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":930,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c8","type":"comment","name":"── PARAMETER OBJECT ──","x":160,"y":980,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_par","type":"inject","name":"Read param 1","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":170,"y":1020,"z":"tab_clx","wires":[["clx_param"]]},
+  {"id":"clx_param","type":"cip-param","name":"Param 1 (Speed)","endpoint":"ep_clx","paramInstance":"1","x":400,"y":1020,"z":"tab_clx","wires":[["clx_dbg13"]]},
+  {"id":"clx_dbg13","type":"debug","name":"Param","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":580,"y":1020,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c9","type":"comment","name":"── ENERGY OBJECT ──","x":140,"y":1070,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_nrg","type":"inject","name":"Read energy","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":1110,"z":"tab_clx","wires":[["clx_energy"]]},
+  {"id":"clx_energy","type":"cip-energy","name":"Energy 1","endpoint":"ep_clx","instance":"1","pollInterval":"0","x":370,"y":1110,"z":"tab_clx","wires":[["clx_dbg14"]]},
+  {"id":"clx_dbg14","type":"debug","name":"Energy","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":1110,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c10","type":"comment","name":"── FILE OBJECT ──","x":130,"y":1160,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_file","type":"inject","name":"Read file info","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":170,"y":1200,"z":"tab_clx","wires":[["clx_file"]]},
+  {"id":"clx_file","type":"cip-file","name":"File 1","endpoint":"ep_clx","fileInstance":"1","x":360,"y":1200,"z":"tab_clx","wires":[["clx_dbg15"]]},
+  {"id":"clx_dbg15","type":"debug","name":"File","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":1200,"z":"tab_clx","wires":[]},
+
+  {"id":"clx_c11","type":"comment","name":"── DYNAMIC TAG ──","x":140,"y":1250,"z":"tab_clx","wires":[]},
+  {"id":"clx_inj_dyn","type":"inject","name":"Read Counter","props":[{"p":"tagName","v":"Counter","vt":"str"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":1290,"z":"tab_clx","wires":[["clx_dyn"]]},
+  {"id":"clx_dyn","type":"cip-read","name":"Dynamic","endpoint":"ep_clx","tagName":"","dataType":"auto","pollInterval":"0","x":370,"y":1290,"z":"tab_clx","wires":[["clx_dbg16"]]},
+  {"id":"clx_dbg16","type":"debug","name":"Dynamic","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":1290,"z":"tab_clx","wires":[]},
+
+
+
+  {"id":"cplx_c1","type":"comment","name":"── READ / WRITE ──","x":120,"y":40,"z":"tab_cplx","wires":[]},
+  {"id":"cplx_inj_read","type":"inject","name":"Read MyDint","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"5","topic":"","x":160,"y":80,"z":"tab_cplx","wires":[["cplx_read"]]},
+  {"id":"cplx_read","type":"cip-read","name":"MyDint","endpoint":"ep_cplx","tagName":"MyDint","dataType":"auto","pollInterval":"0","x":370,"y":80,"z":"tab_cplx","wires":[["cplx_dbg1"]]},
+  {"id":"cplx_dbg1","type":"debug","name":"Read","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":80,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_poll","type":"inject","name":"Poll Temp","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"6","topic":"","x":150,"y":130,"z":"tab_cplx","wires":[["cplx_poll"]]},
+  {"id":"cplx_poll","type":"cip-read","name":"Temperature","endpoint":"ep_cplx","tagName":"Temperature","dataType":"auto","pollInterval":"2000","x":390,"y":130,"z":"tab_cplx","wires":[["cplx_dbg2"]]},
+  {"id":"cplx_dbg2","type":"debug","name":"Temp","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":130,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_w99","type":"inject","name":"Write 99","props":[{"p":"payload","v":"99","vt":"num"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":190,"z":"tab_cplx","wires":[["cplx_write"]]},
+  {"id":"cplx_write","type":"cip-write","name":"MyDint","endpoint":"ep_cplx","tagName":"MyDint","dataType":"auto","staticValue":"","useStaticValue":false,"x":370,"y":190,"z":"tab_cplx","wires":[["cplx_dbg3"]]},
+  {"id":"cplx_dbg3","type":"debug","name":"Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":190,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_sp","type":"inject","name":"SetPoint 80.5","props":[{"p":"payload","v":"80.5","vt":"num"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":240,"z":"tab_cplx","wires":[["cplx_wsp"]]},
+  {"id":"cplx_wsp","type":"cip-write","name":"SetPoint","endpoint":"ep_cplx","tagName":"SetPoint","dataType":"auto","staticValue":"","useStaticValue":false,"x":370,"y":240,"z":"tab_cplx","wires":[["cplx_dbg4"]]},
+  {"id":"cplx_dbg4","type":"debug","name":"SP Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":240,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_c2","type":"comment","name":"── BROWSE ──","x":120,"y":300,"z":"tab_cplx","wires":[]},
+  {"id":"cplx_inj_br","type":"inject","name":"Browse","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":140,"y":340,"z":"tab_cplx","wires":[["cplx_browse"]]},
+  {"id":"cplx_browse","type":"cip-browse","name":"Browse","endpoint":"ep_cplx","x":340,"y":340,"z":"tab_cplx","wires":[["cplx_dbg5"]]},
+  {"id":"cplx_dbg5","type":"debug","name":"Tags","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":340,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_c3","type":"comment","name":"── SUBSCRIBE ──","x":130,"y":390,"z":"tab_cplx","wires":[]},
+  {"id":"cplx_sub","type":"cip-subscribe","name":"Counter+Temp","endpoint":"ep_cplx","scanRate":"2000","deadband":"0","diffOnly":false,"tags":"Counter,Temperature","x":400,"y":430,"z":"tab_cplx","wires":[["cplx_dbg6"]]},
+  {"id":"cplx_dbg6","type":"debug","name":"Subscribe","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":590,"y":430,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_c4","type":"comment","name":"── CONTROLLER / RAW / MOTION / SYNC / PARAM / ENERGY / FILE ──","x":280,"y":480,"z":"tab_cplx","wires":[]},
+  {"id":"cplx_inj_ctrl","type":"inject","name":"Controller","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":520,"z":"tab_cplx","wires":[["cplx_ctrl"]]},
+  {"id":"cplx_ctrl","type":"cip-controller","name":"Controller","endpoint":"ep_cplx","pollInterval":"0","x":370,"y":520,"z":"tab_cplx","wires":[["cplx_dbg7"]]},
+  {"id":"cplx_dbg7","type":"debug","name":"Ctrl","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":520,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_raw","type":"inject","name":"Raw Identity","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":570,"z":"tab_cplx","wires":[["cplx_raw"]]},
+  {"id":"cplx_raw","type":"cip-raw","name":"Identity 0x01","endpoint":"ep_cplx","service":"01","classId":"01","instanceId":"00","attributeId":"","useConnected":false,"x":390,"y":570,"z":"tab_cplx","wires":[["cplx_dbg8"]]},
+  {"id":"cplx_dbg8","type":"debug","name":"Raw","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":570,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_mot","type":"inject","name":"Motion axis","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":620,"z":"tab_cplx","wires":[["cplx_motion"]]},
+  {"id":"cplx_motion","type":"cip-motion","name":"Axis 1","endpoint":"ep_cplx","axisInstance":"1","groupInstance":"1","pollInterval":"0","x":370,"y":620,"z":"tab_cplx","wires":[["cplx_dbg9"]]},
+  {"id":"cplx_dbg9","type":"debug","name":"Motion","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":620,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_sync","type":"inject","name":"PTP Sync","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":670,"z":"tab_cplx","wires":[["cplx_sync"]]},
+  {"id":"cplx_sync","type":"cip-sync","name":"PTP","endpoint":"ep_cplx","pollInterval":"0","x":360,"y":670,"z":"tab_cplx","wires":[["cplx_dbg10"]]},
+  {"id":"cplx_dbg10","type":"debug","name":"Sync","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":670,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_par","type":"inject","name":"Param 1","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":720,"z":"tab_cplx","wires":[["cplx_param"]]},
+  {"id":"cplx_param","type":"cip-param","name":"Speed","endpoint":"ep_cplx","paramInstance":"1","x":360,"y":720,"z":"tab_cplx","wires":[["cplx_dbg11"]]},
+  {"id":"cplx_dbg11","type":"debug","name":"Param","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":720,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_nrg","type":"inject","name":"Energy","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":140,"y":770,"z":"tab_cplx","wires":[["cplx_energy"]]},
+  {"id":"cplx_energy","type":"cip-energy","name":"Energy 1","endpoint":"ep_cplx","instance":"1","pollInterval":"0","x":370,"y":770,"z":"tab_cplx","wires":[["cplx_dbg12"]]},
+  {"id":"cplx_dbg12","type":"debug","name":"Energy","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":770,"z":"tab_cplx","wires":[]},
+
+  {"id":"cplx_inj_file","type":"inject","name":"File info","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":820,"z":"tab_cplx","wires":[["cplx_file"]]},
+  {"id":"cplx_file","type":"cip-file","name":"File 1","endpoint":"ep_cplx","fileInstance":"1","x":360,"y":820,"z":"tab_cplx","wires":[["cplx_dbg13"]]},
+  {"id":"cplx_dbg13","type":"debug","name":"File","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":820,"z":"tab_cplx","wires":[]},
+
+
+
+  {"id":"m8_c1","type":"comment","name":"── I/O READ (UCMM, kein ForwardOpen) ──","x":220,"y":40,"z":"tab_micro800","wires":[]},
+  {"id":"m8_inj_do","type":"inject","name":"Read DO_00","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"6","topic":"","x":160,"y":80,"z":"tab_micro800","wires":[["m8_rdo"]]},
+  {"id":"m8_rdo","type":"cip-read","name":"_IO_EM_DO_00","endpoint":"ep_micro800","tagName":"_IO_EM_DO_00","dataType":"auto","pollInterval":"0","x":400,"y":80,"z":"tab_micro800","wires":[["m8_dbg1"]]},
+  {"id":"m8_dbg1","type":"debug","name":"DO_00","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":600,"y":80,"z":"tab_micro800","wires":[]},
+
+  {"id":"m8_inj_di","type":"inject","name":"Poll DI_00","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"7","topic":"","x":160,"y":130,"z":"tab_micro800","wires":[["m8_rdi"]]},
+  {"id":"m8_rdi","type":"cip-read","name":"_IO_EM_DI_00","endpoint":"ep_micro800","tagName":"_IO_EM_DI_00","dataType":"auto","pollInterval":"2000","x":410,"y":130,"z":"tab_micro800","wires":[["m8_dbg2"]]},
+  {"id":"m8_dbg2","type":"debug","name":"DI_00","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":600,"y":130,"z":"tab_micro800","wires":[]},
+
+  {"id":"m8_inj_cnt","type":"inject","name":"Read Counter","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":180,"z":"tab_micro800","wires":[["m8_rcnt"]]},
+  {"id":"m8_rcnt","type":"cip-read","name":"Counter","endpoint":"ep_micro800","tagName":"Counter","dataType":"auto","pollInterval":"0","x":380,"y":180,"z":"tab_micro800","wires":[["m8_dbg3"]]},
+  {"id":"m8_dbg3","type":"debug","name":"Counter","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":580,"y":180,"z":"tab_micro800","wires":[]},
+
+  {"id":"m8_c2","type":"comment","name":"── WRITE ──","x":120,"y":240,"z":"tab_micro800","wires":[]},
+  {"id":"m8_inj_on","type":"inject","name":"DO_00 ON","props":[{"p":"payload","v":"true","vt":"bool"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":280,"z":"tab_micro800","wires":[["m8_wdo"]]},
+  {"id":"m8_inj_off","type":"inject","name":"DO_00 OFF","props":[{"p":"payload","v":"false","vt":"bool"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":320,"z":"tab_micro800","wires":[["m8_wdo"]]},
+  {"id":"m8_wdo","type":"cip-write","name":"_IO_EM_DO_00","endpoint":"ep_micro800","tagName":"_IO_EM_DO_00","dataType":"auto","staticValue":"","useStaticValue":false,"x":400,"y":300,"z":"tab_micro800","wires":[["m8_dbg4"]]},
+  {"id":"m8_dbg4","type":"debug","name":"Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":600,"y":300,"z":"tab_micro800","wires":[]},
+
+  {"id":"m8_inj_sp","type":"inject","name":"SetPoint 55","props":[{"p":"payload","v":"55","vt":"num"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":360,"z":"tab_micro800","wires":[["m8_wsp"]]},
+  {"id":"m8_wsp","type":"cip-write","name":"SetPoint","endpoint":"ep_micro800","tagName":"SetPoint","dataType":"auto","staticValue":"","useStaticValue":false,"x":380,"y":360,"z":"tab_micro800","wires":[["m8_dbg5"]]},
+  {"id":"m8_dbg5","type":"debug","name":"SP","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":360,"z":"tab_micro800","wires":[]},
+
+  {"id":"m8_c3","type":"comment","name":"── BROWSE ──","x":120,"y":420,"z":"tab_micro800","wires":[]},
+  {"id":"m8_inj_br","type":"inject","name":"Browse","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":140,"y":460,"z":"tab_micro800","wires":[["m8_browse"]]},
+  {"id":"m8_browse","type":"cip-browse","name":"Browse","endpoint":"ep_micro800","x":340,"y":460,"z":"tab_micro800","wires":[["m8_dbg6"]]},
+  {"id":"m8_dbg6","type":"debug","name":"Tags","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":560,"y":460,"z":"tab_micro800","wires":[]},
+
+  {"id":"m8_c4","type":"comment","name":"── RAW CIP (Identity) ──","x":160,"y":510,"z":"tab_micro800","wires":[]},
+  {"id":"m8_inj_raw","type":"inject","name":"Raw Identity","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":550,"z":"tab_micro800","wires":[["m8_raw"]]},
+  {"id":"m8_raw","type":"cip-raw","name":"Identity 0x01","endpoint":"ep_micro800","service":"01","classId":"01","instanceId":"00","attributeId":"","useConnected":false,"x":390,"y":550,"z":"tab_micro800","wires":[["m8_dbg7"]]},
+  {"id":"m8_dbg7","type":"debug","name":"Raw","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":550,"z":"tab_micro800","wires":[]},
+
+  {"id":"m8_c5","type":"comment","name":"── DYNAMIC (alle DI) ──","x":160,"y":600,"z":"tab_micro800","wires":[]},
+  {"id":"m8_inj_d5","type":"inject","name":"DI_05","props":[{"p":"tagName","v":"_IO_EM_DI_05","vt":"str"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":140,"y":640,"z":"tab_micro800","wires":[["m8_dyn"]]},
+  {"id":"m8_inj_d10","type":"inject","name":"DI_10","props":[{"p":"tagName","v":"_IO_EM_DI_10","vt":"str"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":140,"y":680,"z":"tab_micro800","wires":[["m8_dyn"]]},
+  {"id":"m8_dyn","type":"cip-read","name":"Dynamic I/O","endpoint":"ep_micro800","tagName":"","dataType":"auto","pollInterval":"0","x":380,"y":660,"z":"tab_micro800","wires":[["m8_dbg8"]]},
+  {"id":"m8_dbg8","type":"debug","name":"Dynamic","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":580,"y":660,"z":"tab_micro800","wires":[]},
+
+
+
+  {"id":"mlx_c1","type":"comment","name":"── PCCC READ ──","x":130,"y":40,"z":"tab_mlx","wires":[]},
+  {"id":"mlx_inj_n7","type":"inject","name":"Read N7:0 (5)","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"5","topic":"","x":170,"y":80,"z":"tab_mlx","wires":[["mlx_rn7"]]},
+  {"id":"mlx_rn7","type":"cip-pccc-read","name":"N7:0","endpoint":"ep_mlx","address":"N7:0","count":"5","pollInterval":"0","x":370,"y":80,"z":"tab_mlx","wires":[["mlx_dbg1"]]},
+  {"id":"mlx_dbg1","type":"debug","name":"N7","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":80,"z":"tab_mlx","wires":[]},
+
+  {"id":"mlx_inj_f8","type":"inject","name":"Read F8:0 (3)","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":170,"y":130,"z":"tab_mlx","wires":[["mlx_rf8"]]},
+  {"id":"mlx_rf8","type":"cip-pccc-read","name":"F8:0","endpoint":"ep_mlx","address":"F8:0","count":"3","pollInterval":"0","x":370,"y":130,"z":"tab_mlx","wires":[["mlx_dbg2"]]},
+  {"id":"mlx_dbg2","type":"debug","name":"F8","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":130,"z":"tab_mlx","wires":[]},
+
+  {"id":"mlx_inj_b3","type":"inject","name":"Read B3:0","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":150,"y":180,"z":"tab_mlx","wires":[["mlx_rb3"]]},
+  {"id":"mlx_rb3","type":"cip-pccc-read","name":"B3:0","endpoint":"ep_mlx","address":"B3:0","count":"1","pollInterval":"0","x":370,"y":180,"z":"tab_mlx","wires":[["mlx_dbg3"]]},
+  {"id":"mlx_dbg3","type":"debug","name":"B3","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":180,"z":"tab_mlx","wires":[]},
+
+  {"id":"mlx_inj_poll","type":"inject","name":"Poll N7:4","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"6","topic":"","x":150,"y":230,"z":"tab_mlx","wires":[["mlx_poll"]]},
+  {"id":"mlx_poll","type":"cip-pccc-read","name":"N7:4 poll","endpoint":"ep_mlx","address":"N7:4","count":"1","pollInterval":"2000","x":390,"y":230,"z":"tab_mlx","wires":[["mlx_dbg4"]]},
+  {"id":"mlx_dbg4","type":"debug","name":"Poll","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":230,"z":"tab_mlx","wires":[]},
+
+  {"id":"mlx_c2","type":"comment","name":"── PCCC WRITE ──","x":140,"y":290,"z":"tab_mlx","wires":[]},
+  {"id":"mlx_inj_wn7","type":"inject","name":"Write 999 → N7:0","props":[{"p":"payload","v":"999","vt":"num"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":180,"y":330,"z":"tab_mlx","wires":[["mlx_wn7"]]},
+  {"id":"mlx_wn7","type":"cip-pccc-write","name":"N7:0","endpoint":"ep_mlx","address":"N7:0","staticValue":"","useStaticValue":false,"x":370,"y":330,"z":"tab_mlx","wires":[["mlx_dbg5"]]},
+  {"id":"mlx_dbg5","type":"debug","name":"N7 Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":330,"z":"tab_mlx","wires":[]},
+
+  {"id":"mlx_inj_wf8","type":"inject","name":"Write 3.14 → F8:2","props":[{"p":"payload","v":"3.14","vt":"num"},{"p":"address","v":"F8:2","vt":"str"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":180,"y":380,"z":"tab_mlx","wires":[["mlx_wf8"]]},
+  {"id":"mlx_wf8","type":"cip-pccc-write","name":"F8:2","endpoint":"ep_mlx","address":"F8:2","staticValue":"","useStaticValue":false,"x":370,"y":380,"z":"tab_mlx","wires":[["mlx_dbg6"]]},
+  {"id":"mlx_dbg6","type":"debug","name":"F8 Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":380,"z":"tab_mlx","wires":[]},
+
+
+
+  {"id":"p5_c1","type":"comment","name":"── PCCC READ (nur Registerfiles) ──","x":190,"y":40,"z":"tab_plc5","wires":[]},
+  {"id":"p5_inj_n7","type":"inject","name":"Read N7:0 (5)","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"5","topic":"","x":170,"y":80,"z":"tab_plc5","wires":[["p5_rn7"]]},
+  {"id":"p5_rn7","type":"cip-pccc-read","name":"N7:0","endpoint":"ep_plc5","address":"N7:0","count":"5","pollInterval":"0","x":370,"y":80,"z":"tab_plc5","wires":[["p5_dbg1"]]},
+  {"id":"p5_dbg1","type":"debug","name":"N7","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":80,"z":"tab_plc5","wires":[]},
+
+  {"id":"p5_inj_f8","type":"inject","name":"Read F8:0 (5)","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":170,"y":130,"z":"tab_plc5","wires":[["p5_rf8"]]},
+  {"id":"p5_rf8","type":"cip-pccc-read","name":"F8:0","endpoint":"ep_plc5","address":"F8:0","count":"5","pollInterval":"0","x":370,"y":130,"z":"tab_plc5","wires":[["p5_dbg2"]]},
+  {"id":"p5_dbg2","type":"debug","name":"F8","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":130,"z":"tab_plc5","wires":[]},
+
+  {"id":"p5_inj_b3","type":"inject","name":"Read B3:0 (2)","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":180,"z":"tab_plc5","wires":[["p5_rb3"]]},
+  {"id":"p5_rb3","type":"cip-pccc-read","name":"B3:0","endpoint":"ep_plc5","address":"B3:0","count":"2","pollInterval":"0","x":370,"y":180,"z":"tab_plc5","wires":[["p5_dbg3"]]},
+  {"id":"p5_dbg3","type":"debug","name":"B3","active":true,"tosidebar":true,"tostatus":true,"complete":"true","targetType":"full","statusVal":"payload","statusType":"auto","x":570,"y":180,"z":"tab_plc5","wires":[]},
+
+  {"id":"p5_inj_poll","type":"inject","name":"Poll N7:0","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":true,"onceDelay":"6","topic":"","x":150,"y":230,"z":"tab_plc5","wires":[["p5_poll"]]},
+  {"id":"p5_poll","type":"cip-pccc-read","name":"N7:0 poll","endpoint":"ep_plc5","address":"N7:0","count":"3","pollInterval":"3000","x":390,"y":230,"z":"tab_plc5","wires":[["p5_dbg4"]]},
+  {"id":"p5_dbg4","type":"debug","name":"Poll","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":230,"z":"tab_plc5","wires":[]},
+
+  {"id":"p5_c2","type":"comment","name":"── PCCC WRITE ──","x":140,"y":290,"z":"tab_plc5","wires":[]},
+  {"id":"p5_inj_wn7","type":"inject","name":"Write 1234 → N7:5","props":[{"p":"payload","v":"1234","vt":"num"},{"p":"address","v":"N7:5","vt":"str"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":180,"y":330,"z":"tab_plc5","wires":[["p5_wn7"]]},
+  {"id":"p5_wn7","type":"cip-pccc-write","name":"N7:5","endpoint":"ep_plc5","address":"N7:5","staticValue":"","useStaticValue":false,"x":370,"y":330,"z":"tab_plc5","wires":[["p5_dbg5"]]},
+  {"id":"p5_dbg5","type":"debug","name":"Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":330,"z":"tab_plc5","wires":[]},
+
+  {"id":"p5_inj_wf8","type":"inject","name":"Write 99.9 → F8:0","props":[{"p":"payload","v":"99.9","vt":"num"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":180,"y":380,"z":"tab_plc5","wires":[["p5_wf8"]]},
+  {"id":"p5_wf8","type":"cip-pccc-write","name":"F8:0","endpoint":"ep_plc5","address":"F8:0","staticValue":"","useStaticValue":false,"x":370,"y":380,"z":"tab_plc5","wires":[["p5_dbg6"]]},
+  {"id":"p5_dbg6","type":"debug","name":"F8 Write","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":380,"z":"tab_plc5","wires":[]},
+
+
+
+  {"id":"disc_c1","type":"comment","name":"── NETWORK DISCOVERY (UDP Broadcast) ──","x":220,"y":40,"z":"tab_discover","wires":[]},
+  {"id":"disc_inj","type":"inject","name":"Discover PLCs","props":[{"p":"payload","v":"","vt":"date"}],"repeat":"","crontab":"","once":false,"onceDelay":"0.1","topic":"","x":160,"y":80,"z":"tab_discover","wires":[["disc_node"]]},
+  {"id":"disc_node","type":"cip-discover","name":"Discover","x":360,"y":80,"z":"tab_discover","wires":[["disc_dbg"]]},
+  {"id":"disc_dbg","type":"debug","name":"Devices","active":true,"tosidebar":true,"tostatus":true,"complete":"payload","targetType":"msg","x":570,"y":80,"z":"tab_discover","wires":[]}
+]

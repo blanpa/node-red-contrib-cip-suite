@@ -1,0 +1,527 @@
+"use strict";
+/**
+ * CIP I/O Scanner node — implicit (Class 1 UDP) messaging for cyclic I/O.
+ *
+ * Establishes an I/O connection via ForwardOpen over TCP, then exchanges
+ * cyclic data via UDP using Assembly Objects.
+ *
+ * @module cip-io-scanner
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+const dgram = __importStar(require("dgram"));
+const net = __importStar(require("net"));
+const utils_1 = require("./utils");
+const ENCAP_HEADER_LEN = 24;
+const EIP_PORT = 44818;
+const IO_UDP_PORT_DEFAULT = 2222; // EtherNet/IP implicit messaging port
+module.exports = function (RED) {
+    function CipIOScannerNode(config) {
+        RED.nodes.createNode(this, config);
+        const node = this;
+        node._targetAddress = config.targetAddress || "";
+        node._targetPort = parseInt(config.targetPort, 10) || EIP_PORT;
+        node._rpi = parseInt(config.rpi, 10) || 100; // ms
+        node._inputAssembly = parseInt(config.inputAssembly, 10) || 100;
+        node._outputAssembly = parseInt(config.outputAssembly, 10) || 150;
+        node._configAssembly = parseInt(config.configAssembly, 10) || 0;
+        node._inputSize = parseInt(config.inputSize, 10) || 32;
+        node._outputSize = parseInt(config.outputSize, 10) || 32;
+        node._udpPort = parseInt(config.udpPort, 10) || IO_UDP_PORT_DEFAULT;
+        node._tcpSocket = null;
+        node._udpSocket = null;
+        node._sessionHandle = 0;
+        node._otConnectionId = 0; // O→T (our output → target)
+        node._toConnectionId = 0; // T→O (target output → our input)
+        node._connectionSerial = Math.floor(Math.random() * 0xFFFF);
+        node._seqCount = 0;
+        node._active = false;
+        node._closing = false;
+        node._ioTimer = null;
+        node._timeoutTimer = null;
+        node._lastInputData = null;
+        node._outputData = Buffer.alloc(node._outputSize);
+        node._rxBuffer = Buffer.alloc(0);
+        if (!node._targetAddress) {
+            node.status(utils_1.STATUS.error("no target address"));
+            return;
+        }
+        // ── ENIP helpers ──
+        function buildEncapHeader(cmd, dataLen, session) {
+            const hdr = Buffer.alloc(ENCAP_HEADER_LEN);
+            hdr.writeUInt16LE(cmd, 0);
+            hdr.writeUInt16LE(dataLen, 2);
+            hdr.writeUInt32LE(session, 4);
+            return hdr;
+        }
+        function buildRegisterSession() {
+            const data = Buffer.alloc(4);
+            data.writeUInt16LE(1, 0);
+            data.writeUInt16LE(0, 2);
+            return Buffer.concat([buildEncapHeader(0x0065, 4, 0), data]);
+        }
+        // Build ForwardOpen for Class 1 (implicit) I/O connection
+        function buildForwardOpen() {
+            // CIP path to Connection Manager (class 0x06, instance 1)
+            const cmPath = Buffer.from([0x20, 0x06, 0x24, 0x01]);
+            const rpiMicroseconds = node._rpi * 1000;
+            // ForwardOpen service data
+            // Using fixed connection params for Class 1 transport
+            const foData = Buffer.alloc(40);
+            let off = 0;
+            // Priority/Time_tick (1) + Time_out_ticks (1)
+            foData.writeUInt8(0x0A, off++); // priority + time_tick
+            foData.writeUInt8(0xF0, off++); // timeout_ticks (240 * 2^10 = ~246ms)
+            // O→T Connection ID (we assign)
+            node._otConnectionId = 0x20000000 + (node._connectionSerial & 0xFFFF);
+            foData.writeUInt32LE(node._otConnectionId, off);
+            off += 4;
+            // T→O Connection ID (we assign, target fills)
+            node._toConnectionId = 0x30000000 + (node._connectionSerial & 0xFFFF);
+            foData.writeUInt32LE(node._toConnectionId, off);
+            off += 4;
+            // Connection Serial Number
+            foData.writeUInt16LE(node._connectionSerial, off);
+            off += 2;
+            // Originator Vendor ID
+            foData.writeUInt16LE(0x0001, off);
+            off += 2;
+            // Originator Serial Number
+            foData.writeUInt32LE(0x12345678, off);
+            off += 4;
+            // Connection Timeout Multiplier
+            foData.writeUInt8(0x03, off++); // 8x
+            // Reserved (3 bytes)
+            off += 3;
+            // O→T RPI (microseconds)
+            foData.writeUInt32LE(rpiMicroseconds, off);
+            off += 4;
+            // O→T Network Connection Parameters (16-bit)
+            // Point-to-point, Class 1, Fixed size
+            const otConnParams = (node._outputSize & 0x01FF) | 0x4000; // Fixed, Class 1
+            foData.writeUInt16LE(otConnParams, off);
+            off += 2;
+            // T→O RPI (microseconds)
+            foData.writeUInt32LE(rpiMicroseconds, off);
+            off += 4;
+            // T→O Network Connection Parameters
+            const toConnParams = (node._inputSize & 0x01FF) | 0x4000; // Fixed, Class 1
+            foData.writeUInt16LE(toConnParams, off);
+            off += 2;
+            // Transport Type/Trigger: Class 1, Cyclic, Server
+            foData.writeUInt8(0x01, off++); // Direction=client, Class 1
+            // Connection Path
+            // → Config assembly (optional), → Output assembly, → Input assembly
+            const pathSegments = [];
+            if (node._configAssembly > 0) {
+                // Config: class 0x04 (Assembly), instance = configAssembly
+                pathSegments.push(Buffer.from([0x20, 0x04, 0x24, node._configAssembly & 0xFF]));
+            }
+            // Output (O→T): class 0x04, instance = outputAssembly
+            pathSegments.push(Buffer.from([0x20, 0x04, 0x24, node._outputAssembly & 0xFF]));
+            // Input (T→O): class 0x04, instance = inputAssembly
+            pathSegments.push(Buffer.from([0x20, 0x04, 0x24, node._inputAssembly & 0xFF]));
+            const connPath = Buffer.concat(pathSegments);
+            // Connection path size in words
+            foData.writeUInt8(connPath.length / 2, off++);
+            // Reserved
+            off++; // pad out foData to make room
+            // Build complete CIP request
+            // Service(1) + PathSize(1) + Path(4) + ForwardOpenData + ConnectionPath
+            const cipReq = Buffer.alloc(2 + cmPath.length + off + connPath.length);
+            let reqOff = 0;
+            cipReq.writeUInt8(0x54, reqOff++); // ForwardOpen service
+            cipReq.writeUInt8(cmPath.length / 2, reqOff++);
+            cmPath.copy(cipReq, reqOff);
+            reqOff += cmPath.length;
+            foData.copy(cipReq, reqOff, 0, off);
+            reqOff += off;
+            connPath.copy(cipReq, reqOff);
+            // Wrap in SendRRData
+            const cpfLen = 4 + 2 + 2 + 4 + 4 + cipReq.length;
+            const cpf = Buffer.alloc(cpfLen);
+            let cpfOff = 0;
+            cpf.writeUInt32LE(0, cpfOff);
+            cpfOff += 4; // interface handle
+            cpf.writeUInt16LE(10, cpfOff);
+            cpfOff += 2; // timeout
+            cpf.writeUInt16LE(2, cpfOff);
+            cpfOff += 2; // 2 items
+            cpf.writeUInt16LE(0x0000, cpfOff);
+            cpfOff += 2; // null address
+            cpf.writeUInt16LE(0, cpfOff);
+            cpfOff += 2;
+            cpf.writeUInt16LE(0x00B2, cpfOff);
+            cpfOff += 2; // UCMM
+            cpf.writeUInt16LE(cipReq.length, cpfOff);
+            cpfOff += 2;
+            cipReq.copy(cpf, cpfOff);
+            return Buffer.concat([buildEncapHeader(0x006F, cpf.length, node._sessionHandle), cpf]);
+        }
+        function buildForwardClose() {
+            const cmPath = Buffer.from([0x20, 0x06, 0x24, 0x01]);
+            const fcData = Buffer.alloc(12);
+            let off = 0;
+            fcData.writeUInt8(0x0A, off++);
+            fcData.writeUInt8(0xF0, off++);
+            fcData.writeUInt16LE(node._connectionSerial, off);
+            off += 2;
+            fcData.writeUInt16LE(0x0001, off);
+            off += 2;
+            fcData.writeUInt32LE(0x12345678, off);
+            off += 4;
+            // Connection path size + reserved
+            fcData.writeUInt8(0x03, off++);
+            fcData.writeUInt8(0x00, off++);
+            // Connection path: 0x01/slot
+            const connPath = Buffer.from([0x01, 0x00, 0x20, 0x04, 0x24, node._inputAssembly & 0xFF]);
+            const cipReq = Buffer.alloc(2 + cmPath.length + fcData.length + connPath.length);
+            let reqOff = 0;
+            cipReq.writeUInt8(0x4E, reqOff++); // ForwardClose
+            cipReq.writeUInt8(cmPath.length / 2, reqOff++);
+            cmPath.copy(cipReq, reqOff);
+            reqOff += cmPath.length;
+            fcData.copy(cipReq, reqOff);
+            reqOff += fcData.length;
+            connPath.copy(cipReq, reqOff);
+            // Wrap in SendRRData
+            const cpfLen = 4 + 2 + 2 + 4 + 4 + cipReq.length;
+            const cpf = Buffer.alloc(cpfLen);
+            let cpfOff = 0;
+            cpf.writeUInt32LE(0, cpfOff);
+            cpfOff += 4;
+            cpf.writeUInt16LE(10, cpfOff);
+            cpfOff += 2;
+            cpf.writeUInt16LE(2, cpfOff);
+            cpfOff += 2;
+            cpf.writeUInt16LE(0x0000, cpfOff);
+            cpfOff += 2;
+            cpf.writeUInt16LE(0, cpfOff);
+            cpfOff += 2;
+            cpf.writeUInt16LE(0x00B2, cpfOff);
+            cpfOff += 2;
+            cpf.writeUInt16LE(cipReq.length, cpfOff);
+            cpfOff += 2;
+            cipReq.copy(cpf, cpfOff);
+            return Buffer.concat([buildEncapHeader(0x006F, cpf.length, node._sessionHandle), cpf]);
+        }
+        // Build UDP output packet (Sequenced Address + Connected Data)
+        function buildUDPOutputPacket() {
+            node._seqCount++;
+            const seqCount = node._seqCount & 0xFFFFFFFF;
+            // CPF: 2 items
+            // Item 1: Sequenced Address (type=0x8002) = connID(4) + seqNum(4)
+            // Item 2: Connected Data (type=0x00B1) = seqCount(2) + data
+            const connDataLen = 2 + node._outputSize;
+            const totalLen = 2 + (2 + 2 + 8) + (2 + 2 + connDataLen);
+            const buf = Buffer.alloc(totalLen);
+            let off = 0;
+            buf.writeUInt16LE(2, off);
+            off += 2; // item count
+            // Item 1: Sequenced Address
+            buf.writeUInt16LE(0x8002, off);
+            off += 2;
+            buf.writeUInt16LE(8, off);
+            off += 2;
+            buf.writeUInt32LE(node._otConnectionId, off);
+            off += 4;
+            buf.writeUInt32LE(seqCount, off);
+            off += 4;
+            // Item 2: Connected Data
+            buf.writeUInt16LE(0x00B1, off);
+            off += 2;
+            buf.writeUInt16LE(connDataLen, off);
+            off += 2;
+            buf.writeUInt16LE(node._seqCount & 0xFFFF, off);
+            off += 2;
+            node._outputData.copy(buf, off);
+            return buf;
+        }
+        // ── Connection lifecycle ──
+        async function startConnection() {
+            if (node._closing)
+                return;
+            node.status({ fill: "yellow", shape: "ring", text: "connecting..." });
+            try {
+                // 1. TCP: RegisterSession
+                await tcpConnect();
+                // 2. TCP: ForwardOpen for I/O
+                await sendForwardOpen();
+                // 3. Start UDP I/O
+                startUDPIO();
+                node._active = true;
+                node.status({ fill: "green", shape: "dot", text: "I/O active" });
+                node.log(`I/O connection established: ${node._targetAddress} ` +
+                    `input=Asm${node._inputAssembly}(${node._inputSize}B) ` +
+                    `output=Asm${node._outputAssembly}(${node._outputSize}B) ` +
+                    `RPI=${node._rpi}ms`);
+            }
+            catch (err) {
+                node.error(`I/O connection failed: ${err.message}`);
+                node.status(utils_1.STATUS.error(err.message));
+                cleanup();
+                // Retry after 5 seconds
+                if (!node._closing) {
+                    setTimeout(() => startConnection(), 5000);
+                }
+            }
+        }
+        function tcpConnect() {
+            return new Promise((resolve, reject) => {
+                const socket = new net.Socket();
+                node._tcpSocket = socket;
+                node._rxBuffer = Buffer.alloc(0);
+                const timeout = setTimeout(() => {
+                    socket.destroy();
+                    reject(new Error("TCP connect timeout"));
+                }, 5000);
+                socket.connect(node._targetPort, node._targetAddress, () => {
+                    clearTimeout(timeout);
+                    socket.write(buildRegisterSession());
+                });
+                socket.on("data", (chunk) => {
+                    node._rxBuffer = Buffer.concat([node._rxBuffer, chunk]);
+                    while (node._rxBuffer.length >= ENCAP_HEADER_LEN) {
+                        const dataLen = node._rxBuffer.readUInt16LE(2);
+                        const totalLen = ENCAP_HEADER_LEN + dataLen;
+                        if (node._rxBuffer.length < totalLen)
+                            break;
+                        const pkt = node._rxBuffer.slice(0, totalLen);
+                        node._rxBuffer = node._rxBuffer.slice(totalLen);
+                        const cmd = pkt.readUInt16LE(0);
+                        if (cmd === 0x0065) {
+                            node._sessionHandle = pkt.readUInt32LE(4);
+                            resolve();
+                        }
+                    }
+                });
+                socket.on("error", (err) => {
+                    clearTimeout(timeout);
+                    reject(err);
+                });
+            });
+        }
+        function sendForwardOpen() {
+            return new Promise((resolve, reject) => {
+                if (!node._tcpSocket)
+                    return reject(new Error("No TCP socket"));
+                const timeout = setTimeout(() => {
+                    reject(new Error("ForwardOpen timeout"));
+                }, 5000);
+                // Listen for ForwardOpen response
+                const onData = (chunk) => {
+                    node._rxBuffer = Buffer.concat([node._rxBuffer, chunk]);
+                    while (node._rxBuffer.length >= ENCAP_HEADER_LEN) {
+                        const dataLen = node._rxBuffer.readUInt16LE(2);
+                        const totalLen = ENCAP_HEADER_LEN + dataLen;
+                        if (node._rxBuffer.length < totalLen)
+                            break;
+                        const pkt = node._rxBuffer.slice(0, totalLen);
+                        node._rxBuffer = node._rxBuffer.slice(totalLen);
+                        const cmd = pkt.readUInt16LE(0);
+                        if (cmd === 0x006F) {
+                            // Parse response - find CIP reply in UCMM
+                            // Skip header(24) + interface(4) + timeout(2) + itemCount(2)
+                            let off = ENCAP_HEADER_LEN + 8;
+                            while (off + 4 < pkt.length) {
+                                const typeId = pkt.readUInt16LE(off);
+                                const len = pkt.readUInt16LE(off + 2);
+                                off += 4;
+                                if (typeId === 0x00B2) {
+                                    // CIP reply
+                                    const service = pkt.readUInt8(off) & 0x7F;
+                                    const status = pkt.readUInt8(off + 2);
+                                    if (service === 0x54 && status === 0) {
+                                        // Extract connection IDs from ForwardOpen response
+                                        const cipData = pkt.slice(off + 4);
+                                        if (cipData.length >= 8) {
+                                            node._otConnectionId = cipData.readUInt32LE(0);
+                                            node._toConnectionId = cipData.readUInt32LE(4);
+                                        }
+                                        clearTimeout(timeout);
+                                        node._tcpSocket.removeListener("data", onData);
+                                        resolve();
+                                        return;
+                                    }
+                                    else {
+                                        clearTimeout(timeout);
+                                        node._tcpSocket.removeListener("data", onData);
+                                        reject(new Error(`ForwardOpen failed: CIP status 0x${status.toString(16)}`));
+                                        return;
+                                    }
+                                }
+                                off += len;
+                            }
+                        }
+                    }
+                };
+                node._tcpSocket.on("data", onData);
+                node._tcpSocket.write(buildForwardOpen());
+            });
+        }
+        function startUDPIO() {
+            node._udpSocket = dgram.createSocket("udp4");
+            node._udpSocket.on("message", (msg, rinfo) => {
+                handleUDPInput(msg);
+            });
+            node._udpSocket.on("error", (err) => {
+                node.error(`UDP error: ${err.message}`);
+            });
+            node._udpSocket.bind(node._udpPort, () => {
+                // Start cyclic output timer
+                node._ioTimer = setInterval(() => {
+                    if (node._active && node._udpSocket) {
+                        const packet = buildUDPOutputPacket();
+                        node._udpSocket.send(packet, 0, packet.length, IO_UDP_PORT_DEFAULT, node._targetAddress);
+                    }
+                }, node._rpi);
+            });
+        }
+        function handleUDPInput(msg) {
+            // Parse CPF items
+            if (msg.length < 2)
+                return;
+            const itemCount = msg.readUInt16LE(0);
+            let off = 2;
+            for (let i = 0; i < itemCount && off + 4 <= msg.length; i++) {
+                const typeId = msg.readUInt16LE(off);
+                const len = msg.readUInt16LE(off + 2);
+                off += 4;
+                if (typeId === 0x00B1 && len > 2) {
+                    // Connected Data item
+                    const seqCount = msg.readUInt16LE(off);
+                    const inputData = msg.slice(off + 2, off + len);
+                    resetTimeoutWatch();
+                    // Only emit on change
+                    if (!node._lastInputData || !inputData.equals(node._lastInputData)) {
+                        node._lastInputData = Buffer.from(inputData);
+                        node.send({
+                            payload: {
+                                input: inputData,
+                                parsed: Array.from(inputData),
+                                sequence: seqCount,
+                                timestamp: Date.now(),
+                            },
+                            assembly: node._inputAssembly,
+                        });
+                    }
+                }
+                off += len;
+            }
+        }
+        function resetTimeoutWatch() {
+            if (node._timeoutTimer)
+                clearTimeout(node._timeoutTimer);
+            node._timeoutTimer = setTimeout(() => {
+                if (node._active && !node._closing) {
+                    node._active = false;
+                    node.status({ fill: "yellow", shape: "dot", text: "I/O timeout" });
+                    node.warn("I/O data timeout");
+                }
+            }, node._rpi * 4);
+        }
+        function cleanup() {
+            if (node._ioTimer) {
+                clearInterval(node._ioTimer);
+                node._ioTimer = null;
+            }
+            if (node._timeoutTimer) {
+                clearTimeout(node._timeoutTimer);
+                node._timeoutTimer = null;
+            }
+            if (node._udpSocket) {
+                try {
+                    node._udpSocket.close();
+                }
+                catch (_) { }
+                node._udpSocket = null;
+            }
+            if (node._tcpSocket) {
+                // Try to send ForwardClose before closing
+                if (node._active && node._sessionHandle) {
+                    try {
+                        node._tcpSocket.write(buildForwardClose());
+                    }
+                    catch (_) { }
+                }
+                try {
+                    node._tcpSocket.destroy();
+                }
+                catch (_) { }
+                node._tcpSocket = null;
+            }
+            node._active = false;
+            node._sessionHandle = 0;
+        }
+        // ── Input handler (set output data) ──
+        node.on("input", function (msg) {
+            if (!node._active) {
+                node.error("I/O connection not active", msg);
+                return;
+            }
+            let outputData;
+            if (Buffer.isBuffer(msg.payload)) {
+                outputData = msg.payload;
+            }
+            else if (msg.payload && Buffer.isBuffer(msg.payload.output)) {
+                outputData = msg.payload.output;
+            }
+            else if (Array.isArray(msg.payload)) {
+                outputData = Buffer.from(msg.payload);
+            }
+            else {
+                node.error("Invalid output data. Provide Buffer via msg.payload", msg);
+                return;
+            }
+            // Size check
+            if (outputData.length !== node._outputSize) {
+                const padded = Buffer.alloc(node._outputSize, 0);
+                outputData.copy(padded, 0, 0, Math.min(outputData.length, node._outputSize));
+                outputData = padded;
+            }
+            node._outputData = outputData;
+        });
+        // ── Start ──
+        startConnection();
+        // ── Cleanup ──
+        node.on("close", function (done) {
+            node._closing = true;
+            cleanup();
+            done();
+        });
+    }
+    RED.nodes.registerType("cip-io-scanner", CipIOScannerNode);
+};
+//# sourceMappingURL=cip-io-scanner.js.map

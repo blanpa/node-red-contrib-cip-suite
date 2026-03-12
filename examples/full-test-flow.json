@@ -1,0 +1,1384 @@
+[
+  {
+    "id": "test_all_tab",
+    "type": "tab",
+    "label": "CIP Suite - Full Test",
+    "disabled": false,
+    "info": "Comprehensive test flow for all CIP Suite nodes"
+  },
+  {
+    "id": "ep_sim",
+    "type": "cip-endpoint",
+    "name": "Simulator",
+    "address": "localhost",
+    "port": "44818",
+    "slot": "0",
+    "connTimeout": "5000",
+    "retryInterval": "5000",
+    "useMicro800": false,
+    "routingPath": "",
+    "z": "test_all_tab"
+  },
+  {
+    "id": "ep_micro",
+    "type": "cip-endpoint",
+    "name": "Micro850",
+    "address": "192.168.1.109",
+    "port": "44818",
+    "slot": "0",
+    "connTimeout": "5000",
+    "retryInterval": "5000",
+    "useMicro800": true,
+    "routingPath": "",
+    "z": "test_all_tab"
+  },
+  {
+    "id": "ep_pccc",
+    "type": "cip-pccc-endpoint",
+    "name": "PCCC Simulator",
+    "address": "localhost",
+    "port": "44818",
+    "connTimeout": "5000",
+    "retryInterval": "5000",
+    "z": "test_all_tab"
+  },
+  {
+    "id": "hdr_read",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 READ TESTS \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 160,
+    "y": 40,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_read1",
+    "type": "inject",
+    "name": "Read MyDint",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 130,
+    "y": 80,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "read1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "read1",
+    "type": "cip-read",
+    "name": "MyDint",
+    "endpoint": "ep_sim",
+    "tagName": "MyDint",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 330,
+    "y": 80,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_read"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_read",
+    "type": "debug",
+    "name": "Read Result",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 550,
+    "y": 80,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_read2",
+    "type": "inject",
+    "name": "Read MyReal",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 130,
+    "y": 120,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "read2"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "read2",
+    "type": "cip-read",
+    "name": "MyReal",
+    "endpoint": "ep_sim",
+    "tagName": "MyReal",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 330,
+    "y": 120,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_read"
+      ]
+    ]
+  },
+  {
+    "id": "inj_read3",
+    "type": "inject",
+    "name": "Read MyBool",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 130,
+    "y": 160,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "read3"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "read3",
+    "type": "cip-read",
+    "name": "MyBool",
+    "endpoint": "ep_sim",
+    "tagName": "MyBool",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 330,
+    "y": 160,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_read"
+      ]
+    ]
+  },
+  {
+    "id": "inj_read_bit",
+    "type": "inject",
+    "name": "Read StatusWord.3 (bit)",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 200,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "read_bit"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "read_bit",
+    "type": "cip-read",
+    "name": "Bit 3",
+    "endpoint": "ep_sim",
+    "tagName": "StatusWord.3",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 330,
+    "y": 200,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_read"
+      ]
+    ]
+  },
+  {
+    "id": "inj_read_prog",
+    "type": "inject",
+    "name": "Read Program-scoped",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 240,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "read_prog"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "read_prog",
+    "type": "cip-read",
+    "name": "Program:MainProgram.MyTag",
+    "endpoint": "ep_sim",
+    "tagName": "Program:MainProgram.MyTag",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 370,
+    "y": 240,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_read"
+      ]
+    ]
+  },
+  {
+    "id": "inj_read_dyn",
+    "type": "inject",
+    "name": "Dynamic tag name",
+    "props": [
+      {
+        "p": "tagName",
+        "v": "Counter",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 280,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "read_dyn"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "read_dyn",
+    "type": "cip-read",
+    "name": "msg.tagName",
+    "endpoint": "ep_sim",
+    "tagName": "",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 340,
+    "y": 280,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_read"
+      ]
+    ]
+  },
+  {
+    "id": "inj_read_batch",
+    "type": "inject",
+    "name": "Batch read (3 tags)",
+    "props": [
+      {
+        "p": "tags",
+        "v": "[\"MyDint\",\"MyReal\",\"MyBool\"]",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 320,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "read_batch"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "read_batch",
+    "type": "cip-read",
+    "name": "Batch",
+    "endpoint": "ep_sim",
+    "tagName": "",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 330,
+    "y": 320,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_read"
+      ]
+    ]
+  },
+  {
+    "id": "hdr_poll",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 POLLING TEST \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 170,
+    "y": 380,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "read_poll",
+    "type": "cip-read",
+    "name": "Temperature (2s poll)",
+    "endpoint": "ep_sim",
+    "tagName": "Temperature",
+    "dataType": "auto",
+    "pollInterval": "2000",
+    "x": 370,
+    "y": 420,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_poll"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_poll",
+    "type": "debug",
+    "name": "Poll Result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 590,
+    "y": 420,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "hdr_write",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 WRITE TESTS \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 170,
+    "y": 480,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_write1",
+    "type": "inject",
+    "name": "Write 42 \u2192 MyDint",
+    "props": [
+      {
+        "p": "payload",
+        "v": "42",
+        "vt": "num"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 520,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "write1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "write1",
+    "type": "cip-write",
+    "name": "MyDint",
+    "endpoint": "ep_sim",
+    "tagName": "MyDint",
+    "dataType": "auto",
+    "staticValue": "",
+    "useStaticValue": false,
+    "x": 370,
+    "y": 520,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_write"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_write",
+    "type": "debug",
+    "name": "Write Result",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "payload.success",
+    "statusType": "auto",
+    "x": 590,
+    "y": 540,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_write2",
+    "type": "inject",
+    "name": "Write 3.14 \u2192 MyReal",
+    "props": [
+      {
+        "p": "payload",
+        "v": "3.14",
+        "vt": "num"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 560,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "write2"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "write2",
+    "type": "cip-write",
+    "name": "MyReal",
+    "endpoint": "ep_sim",
+    "tagName": "MyReal",
+    "dataType": "auto",
+    "staticValue": "",
+    "useStaticValue": false,
+    "x": 370,
+    "y": 560,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_write"
+      ]
+    ]
+  },
+  {
+    "id": "inj_write3",
+    "type": "inject",
+    "name": "Write true \u2192 MotorRunning",
+    "props": [
+      {
+        "p": "payload",
+        "v": "true",
+        "vt": "bool"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 180,
+    "y": 600,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "write3"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "write3",
+    "type": "cip-write",
+    "name": "MotorRunning",
+    "endpoint": "ep_sim",
+    "tagName": "MotorRunning",
+    "dataType": "auto",
+    "staticValue": "",
+    "useStaticValue": false,
+    "x": 370,
+    "y": 600,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_write"
+      ]
+    ]
+  },
+  {
+    "id": "inj_write_static",
+    "type": "inject",
+    "name": "Static 99 \u2192 SetPoint",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 640,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "write_static"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "write_static",
+    "type": "cip-write",
+    "name": "SetPoint (static)",
+    "endpoint": "ep_sim",
+    "tagName": "SetPoint",
+    "dataType": "auto",
+    "staticValue": "99",
+    "useStaticValue": true,
+    "x": 380,
+    "y": 640,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_write"
+      ]
+    ]
+  },
+  {
+    "id": "inj_write_batch",
+    "type": "inject",
+    "name": "Batch write",
+    "props": [
+      {
+        "p": "tags",
+        "v": "[{\"name\":\"MyDint\",\"value\":100},{\"name\":\"MyReal\",\"value\":9.99}]",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 150,
+    "y": 680,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "write_batch"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "write_batch",
+    "type": "cip-write",
+    "name": "Batch",
+    "endpoint": "ep_sim",
+    "tagName": "",
+    "dataType": "auto",
+    "staticValue": "",
+    "useStaticValue": false,
+    "x": 370,
+    "y": 680,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_write"
+      ]
+    ]
+  },
+  {
+    "id": "hdr_browse",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 BROWSE TEST \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 170,
+    "y": 740,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_browse",
+    "type": "inject",
+    "name": "Browse all tags",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 150,
+    "y": 780,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "browse1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "browse1",
+    "type": "cip-browse",
+    "name": "Browse",
+    "endpoint": "ep_sim",
+    "x": 330,
+    "y": 780,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_browse"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_browse",
+    "type": "debug",
+    "name": "Tag List",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 540,
+    "y": 780,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "hdr_subscribe",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 SUBSCRIBE TEST \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 180,
+    "y": 840,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "sub1",
+    "type": "cip-subscribe",
+    "name": "Subscribe Counter+Temp",
+    "endpoint": "ep_sim",
+    "tags": "Counter, Temperature",
+    "scanRate": "2000",
+    "deadband": "0.5",
+    "diffOnly": true,
+    "x": 380,
+    "y": 880,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_sub"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_sub",
+    "type": "debug",
+    "name": "Subscription",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 610,
+    "y": 880,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "hdr_discover",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 DISCOVER TEST \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 180,
+    "y": 940,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_discover",
+    "type": "inject",
+    "name": "Discover devices",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 980,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "discover1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "discover1",
+    "type": "cip-discover",
+    "name": "Discover",
+    "broadcastAddress": "255.255.255.255",
+    "timeout": "3000",
+    "x": 340,
+    "y": 980,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_discover"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_discover",
+    "type": "debug",
+    "name": "Devices",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 540,
+    "y": 980,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_discover_target",
+    "type": "inject",
+    "name": "Discover 192.168.1.109",
+    "props": [
+      {
+        "p": "address",
+        "v": "192.168.1.109",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 180,
+    "y": 1020,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "discover1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "hdr_controller",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 CONTROLLER STATUS TEST \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 210,
+    "y": 1080,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_ctrl",
+    "type": "inject",
+    "name": "Get controller info",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 1120,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "ctrl1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "ctrl1",
+    "type": "cip-controller",
+    "name": "Controller",
+    "endpoint": "ep_sim",
+    "pollInterval": "0",
+    "x": 350,
+    "y": 1120,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_ctrl"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_ctrl",
+    "type": "debug",
+    "name": "Controller Info",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "payload.name",
+    "statusType": "auto",
+    "x": 570,
+    "y": 1120,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "hdr_raw",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 RAW CIP TEST \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 170,
+    "y": 1180,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_raw_identity",
+    "type": "inject",
+    "name": "GetAttributeAll Identity",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 180,
+    "y": 1220,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "raw1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "raw1",
+    "type": "cip-raw",
+    "name": "Identity Object",
+    "endpoint": "ep_sim",
+    "service": "0x01",
+    "classId": "0x01",
+    "instanceId": "0x01",
+    "attributeId": "",
+    "useConnected": false,
+    "x": 370,
+    "y": 1220,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_raw"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_raw",
+    "type": "debug",
+    "name": "Raw Response",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "payload.statusText",
+    "statusType": "auto",
+    "x": 590,
+    "y": 1220,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_raw_single",
+    "type": "inject",
+    "name": "GetAttributeSingle",
+    "props": [
+      {
+        "p": "service",
+        "v": "14",
+        "vt": "num"
+      },
+      {
+        "p": "classId",
+        "v": "1",
+        "vt": "num"
+      },
+      {
+        "p": "instanceId",
+        "v": "1",
+        "vt": "num"
+      },
+      {
+        "p": "attributeId",
+        "v": "1",
+        "vt": "num"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 1260,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "raw1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "hdr_pccc",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 PCCC TESTS (SLC500/MicroLogix) \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "",
+    "x": 230,
+    "y": 1320,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_pccc_read",
+    "type": "inject",
+    "name": "Read N7:0",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 130,
+    "y": 1360,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "pccc_read1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "pccc_read1",
+    "type": "cip-pccc-read",
+    "name": "N7:0",
+    "endpoint": "ep_pccc",
+    "address": "N7:0",
+    "count": "1",
+    "pollInterval": "0",
+    "x": 330,
+    "y": 1360,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_pccc"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_pccc",
+    "type": "debug",
+    "name": "PCCC Result",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 570,
+    "y": 1380,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_pccc_read2",
+    "type": "inject",
+    "name": "Read F8:0",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 130,
+    "y": 1400,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "pccc_read2"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "pccc_read2",
+    "type": "cip-pccc-read",
+    "name": "F8:0",
+    "endpoint": "ep_pccc",
+    "address": "F8:0",
+    "count": "1",
+    "pollInterval": "0",
+    "x": 330,
+    "y": 1400,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_pccc"
+      ]
+    ]
+  },
+  {
+    "id": "inj_pccc_read3",
+    "type": "inject",
+    "name": "Read N7:0 (5 elements)",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 1440,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "pccc_read3"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "pccc_read3",
+    "type": "cip-pccc-read",
+    "name": "N7:0 x5",
+    "endpoint": "ep_pccc",
+    "address": "N7:0",
+    "count": "5",
+    "pollInterval": "0",
+    "x": 340,
+    "y": 1440,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_pccc"
+      ]
+    ]
+  },
+  {
+    "id": "inj_pccc_write",
+    "type": "inject",
+    "name": "Write 999 \u2192 N7:0",
+    "props": [
+      {
+        "p": "payload",
+        "v": "999",
+        "vt": "num"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 1480,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "pccc_write1"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "pccc_write1",
+    "type": "cip-pccc-write",
+    "name": "N7:0",
+    "endpoint": "ep_pccc",
+    "address": "N7:0",
+    "staticValue": "",
+    "useStaticValue": false,
+    "x": 340,
+    "y": 1480,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_pccc"
+      ]
+    ]
+  },
+  {
+    "id": "hdr_micro",
+    "type": "comment",
+    "name": "\u2550\u2550\u2550\u2550\u2550\u2550 MICRO850 LIVE TESTS \u2550\u2550\u2550\u2550\u2550\u2550",
+    "info": "Requires real Micro850 at 192.168.1.109",
+    "x": 210,
+    "y": 1540,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_micro_read",
+    "type": "inject",
+    "name": "Read _IO_EM_DI_00",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 1580,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "micro_read"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "micro_read",
+    "type": "cip-read",
+    "name": "DI_00",
+    "endpoint": "ep_micro",
+    "tagName": "_IO_EM_DI_00",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 370,
+    "y": 1580,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_micro"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_micro",
+    "type": "debug",
+    "name": "Micro850",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 590,
+    "y": 1600,
+    "z": "test_all_tab",
+    "wires": []
+  },
+  {
+    "id": "inj_micro_read2",
+    "type": "inject",
+    "name": "Read _IO_EM_DO_00",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 1620,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "micro_read2"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "micro_read2",
+    "type": "cip-read",
+    "name": "DO_00",
+    "endpoint": "ep_micro",
+    "tagName": "_IO_EM_DO_00",
+    "dataType": "auto",
+    "pollInterval": "0",
+    "x": 370,
+    "y": 1620,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_micro"
+      ]
+    ]
+  },
+  {
+    "id": "inj_micro_browse",
+    "type": "inject",
+    "name": "Browse Micro850",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 1660,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "micro_browse"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "micro_browse",
+    "type": "cip-browse",
+    "name": "Browse",
+    "endpoint": "ep_micro",
+    "x": 350,
+    "y": 1660,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_micro"
+      ]
+    ]
+  },
+  {
+    "id": "inj_micro_ctrl",
+    "type": "inject",
+    "name": "Controller Info",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 150,
+    "y": 1700,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "micro_ctrl"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "micro_ctrl",
+    "type": "cip-controller",
+    "name": "Micro850 Status",
+    "endpoint": "ep_micro",
+    "pollInterval": "0",
+    "x": 370,
+    "y": 1700,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_micro"
+      ]
+    ]
+  },
+  {
+    "id": "inj_micro_write",
+    "type": "inject",
+    "name": "Write DO_00=true",
+    "props": [
+      {
+        "p": "payload",
+        "v": "true",
+        "vt": "bool"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 160,
+    "y": 1740,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "micro_write"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  },
+  {
+    "id": "micro_write",
+    "type": "cip-write",
+    "name": "DO_00",
+    "endpoint": "ep_micro",
+    "tagName": "_IO_EM_DO_00",
+    "dataType": "auto",
+    "staticValue": "",
+    "useStaticValue": false,
+    "x": 370,
+    "y": 1740,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "dbg_micro"
+      ]
+    ]
+  },
+  {
+    "id": "inj_micro_write_off",
+    "type": "inject",
+    "name": "Write DO_00=false",
+    "props": [
+      {
+        "p": "payload",
+        "v": "false",
+        "vt": "bool"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 170,
+    "y": 1780,
+    "z": "test_all_tab",
+    "wires": [
+      [
+        "micro_write"
+      ]
+    ],
+    "crontab": "",
+    "topic": ""
+  }
+]

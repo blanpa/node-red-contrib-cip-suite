@@ -1,0 +1,40 @@
+<script type="text/javascript">
+  RED.nodes.registerType('cip-sync', {
+    category: 'CIP Suite',
+    color: '#999999',
+    defaults: {
+      name: {value: ""},
+      endpoint: {value: "", type: "cip-endpoint"},
+      pollInterval: {value: "0"}
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    label: function() { return this.name || "CIP Sync"; },
+    paletteLabel: "cip sync"
+  });
+</script>
+<script type="text/html" data-template-name="cip-sync">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="CIP Sync">
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-plug"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint">
+  </div>
+  <div class="form-row">
+    <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
+    <input type="text" id="node-input-pollInterval" placeholder="0 = on trigger only">
+  </div>
+</script>
+<script type="text/html" data-help-name="cip-sync">
+  <p>CIP Sync — IEEE 1588 PTP time synchronization (ODVA Volume 2, Ch.8).</p>
+  <h3>Commands (msg.command):</h3>
+  <ul>
+    <li><b>status</b> — Read PTP sync status, grandmaster info, offset</li>
+    <li><b>enable</b> — Enable PTP on device</li>
+    <li><b>disable</b> — Disable PTP on device</li>
+    <li><b>getTime</b> — Read system time from Time Sync Object</li>
+  </ul>
+</script>

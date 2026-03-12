@@ -1,0 +1,82 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-subscribe", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      endpoint: { value: "", type: "cip-endpoint", required: true },
+      tags: { value: "" },
+      scanRate: { value: 1000 },
+      deadband: { value: 0 },
+      diffOnly: { value: true }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "cip subscribe",
+    label: function () {
+      return this.name || "subscribe";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-subscribe">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-tags"><i class="fa fa-bookmark"></i> Tags</label>
+    <textarea id="node-input-tags" rows="4" style="width:70%; font-family:monospace;"
+      placeholder="Tag1, Tag2, Tag3&#10;or JSON array: [&quot;Tag1&quot;, &quot;Tag2&quot;]"></textarea>
+  </div>
+  <div class="form-row">
+    <label for="node-input-scanRate"><i class="fa fa-clock-o"></i> Scan Rate (ms)</label>
+    <input type="number" id="node-input-scanRate" placeholder="1000" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-deadband"><i class="fa fa-sliders"></i> Deadband</label>
+    <input type="number" id="node-input-deadband" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-diffOnly"><i class="fa fa-filter"></i> Change Only</label>
+    <input type="checkbox" id="node-input-diffOnly" style="width:auto" />
+    <span>Only send on change</span>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-subscribe">
+  <p>Subscribes to tag values from an Allen-Bradley PLC by periodic scanning.</p>
+  <h3>Inputs</h3>
+  <p>An incoming message can dynamically update the tag list or control scanning:</p>
+  <dl class="message-properties">
+    <dt>tags <span class="property-type">array|string</span></dt>
+    <dd>Override the tag list (comma-separated string or JSON array).</dd>
+    <dt>command <span class="property-type">string</span></dt>
+    <dd><code>"start"</code>, <code>"stop"</code>, or <code>"restart"</code> to control scanning.</dd>
+  </dl>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">object</span></dt>
+    <dd>Object keyed by tag name with current values.</dd>
+    <dt>changed <span class="property-type">array</span></dt>
+    <dd>Array of tag names that changed since last scan (when <b>Change Only</b> is enabled).</dd>
+    <dt>timestamp <span class="property-type">number</span></dt>
+    <dd>Unix timestamp (ms) of the scan.</dd>
+  </dl>
+  <h3>Details</h3>
+  <p>The node reads all configured tags at the specified <b>Scan Rate</b> interval. Tags can be
+  specified as a comma-separated list or a JSON array in the Tags field.</p>
+  <h4>Report by Exception</h4>
+  <p>When <b>Change Only</b> is enabled, the node only emits a message when at least one tag value
+  has changed since the last scan. The <code>msg.changed</code> array lists which tags changed.</p>
+  <h4>Deadband</h4>
+  <p>The <b>Deadband</b> value applies to numeric tags. A value change smaller than the deadband
+  is not considered a change. This is useful for filtering out noise on analog signals.
+  Set to 0 to disable deadband filtering.</p>
+  <p>Scanning starts automatically on deploy and can be controlled via incoming messages.</p>
+</script>

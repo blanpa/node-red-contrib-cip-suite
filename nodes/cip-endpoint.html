@@ -1,0 +1,54 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-endpoint", {
+    category: "config",
+    defaults: {
+      name: { value: "" },
+      address: { value: "", required: true },
+      port: { value: 44818 },
+      slot: { value: 0 },
+      routingPath: { value: "" },
+      connTimeout: { value: 5000 },
+      retryInterval: { value: 5000 },
+      useMicro800: { value: false }
+    },
+    label: function () {
+      return this.name || this.address + ":" + this.port;
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-endpoint">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-address"><i class="fa fa-globe"></i> IP Address</label>
+    <input type="text" id="node-config-input-address" placeholder="192.168.1.1" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
+    <input type="number" id="node-config-input-port" placeholder="44818" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-slot"><i class="fa fa-microchip"></i> Slot</label>
+    <input type="number" id="node-config-input-slot" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-routingPath"><i class="fa fa-random"></i> Routing Path</label>
+    <input type="text" id="node-config-input-routingPath" placeholder="e.g. 1/2/192.168.1.1" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-connTimeout"><i class="fa fa-clock-o"></i> Timeout (ms)</label>
+    <input type="number" id="node-config-input-connTimeout" placeholder="5000" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-retryInterval"><i class="fa fa-refresh"></i> Retry (ms)</label>
+    <input type="number" id="node-config-input-retryInterval" placeholder="5000" />
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-useMicro800"><i class="fa fa-cog"></i> Micro800 Mode</label>
+    <input type="checkbox" id="node-config-input-useMicro800" style="width:auto" />
+    <span>Enable for Micro800 series (no slot routing)</span>
+  </div>
+</script>

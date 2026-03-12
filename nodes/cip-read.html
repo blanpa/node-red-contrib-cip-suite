@@ -1,0 +1,145 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-read", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      endpoint: { value: "", type: "cip-endpoint", required: true },
+      tagName: { value: "" },
+      dataType: { value: "auto" },
+      pollInterval: { value: 0 }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "cip read",
+    label: function () {
+      return this.name || this.tagName || "cip read";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-read">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-tagName"><i class="fa fa-bookmark"></i> Tag Name</label>
+    <div style="display:flex; gap:4px;">
+      <input type="text" id="node-input-tagName" placeholder="Program:MainProgram.MyTag" style="flex:1" />
+      <button type="button" id="node-input-browse-btn" class="red-ui-button" title="Browse tags from PLC">
+        <i class="fa fa-search"></i>
+      </button>
+    </div>
+  </div>
+  <div class="form-row" id="node-input-taglist-row" style="display:none;">
+    <label><i class="fa fa-list"></i> Tags</label>
+    <select id="node-input-taglist" size="8" style="width:70%; font-family:monospace;"></select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-dataType"><i class="fa fa-database"></i> Data Type</label>
+    <select id="node-input-dataType">
+      <option value="auto">Auto-detect</option>
+      <option value="BOOL">BOOL</option>
+      <option value="INT">INT (16-bit)</option>
+      <option value="DINT">DINT (32-bit)</option>
+      <option value="REAL">REAL (float)</option>
+      <option value="STRING">STRING</option>
+      <option value="ARRAY">ARRAY</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
+    <input type="number" id="node-input-pollInterval" placeholder="0 = trigger only" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-read">
+  <p>Reads a tag value from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
+  <h3>Inputs</h3>
+  <p>An incoming message triggers a read. Set <code>msg.tagName</code> to override the configured tag.</p>
+  <p>For batch reads, set <code>msg.tags</code> to an array of tag name strings. All tags are read
+  in a single operation and results are returned as an object keyed by tag name.</p>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">*</span></dt>
+    <dd>The tag value read from the PLC. For batch reads, an object keyed by tag name.</dd>
+    <dt>tagName <span class="property-type">string</span></dt>
+    <dd>The name of the tag that was read.</dd>
+    <dt>dataType <span class="property-type">string</span></dt>
+    <dd>The CIP data type of the tag.</dd>
+    <dt>timestamp <span class="property-type">number</span></dt>
+    <dd>Unix timestamp (ms) of the read.</dd>
+  </dl>
+  <h3>Details</h3>
+  <p>Set a poll interval (in milliseconds) for periodic reads, or leave at 0 for trigger-only mode.
+  Backpressure is applied: if a read is already in-flight, subsequent poll ticks are skipped.</p>
+  <p>Click the <i class="fa fa-search"></i> button next to the tag name field to browse available tags
+  from the connected PLC. The endpoint must be deployed and connected first.</p>
+  <h3>Tag Addressing</h3>
+  <ul>
+    <li><b>Bit-level access:</b> Use dot notation to read individual bits, e.g. <code>MyDint.5</code> reads bit 5 of a DINT tag.</li>
+    <li><b>Array element:</b> Use bracket notation, e.g. <code>MyArray[3]</code> reads element 3.</li>
+    <li><b>Array range:</b> Use range notation, e.g. <code>MyArray[0..9]</code> reads elements 0 through 9.</li>
+    <li><b>UDT members:</b> Access members with dot notation, e.g. <code>MyUDT.MemberName</code>.</li>
+    <li><b>Program-scoped:</b> Use <code>Program:MainProgram.TagName</code> syntax.</li>
+  </ul>
+  <h3>Batch Mode</h3>
+  <p>Send <code>msg.tags</code> as an array of tag names to read multiple tags in one operation.
+  The output <code>msg.payload</code> will be an object with tag names as keys and their values.</p>
+</script>
+
+<script type="text/javascript">
+  (function () {
+    function setupBrowse(nodeType) {
+      $(document).on("click", "#node-input-browse-btn", function () {
+        var endpointId = $("#node-input-endpoint").val();
+        if (!endpointId || endpointId === "_ADD_") {
+          RED.notify("Select and deploy an endpoint first.", "warning");
+          return;
+        }
+        var btn = $(this);
+        btn.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
+        $.getJSON("cip-endpoint/" + endpointId + "/browse")
+          .done(function (tags) {
+            var sel = $("#node-input-taglist");
+            sel.empty();
+            if (!tags.length) {
+              sel.append('<option disabled>No tags found</option>');
+            }
+            tags.forEach(function (t) {
+              var label = t.name + (t.type ? "  (" + t.type + ")" : "");
+              sel.append($("<option>").val(t.name).text(label));
+            });
+            $("#node-input-taglist-row").slideDown(200);
+          })
+          .fail(function (xhr) {
+            var msg = xhr.responseJSON ? xhr.responseJSON.error : "Browse failed";
+            RED.notify(msg, "error");
+          })
+          .always(function () {
+            btn.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
+          });
+      });
+      $(document).on("dblclick", "#node-input-taglist", function () {
+        var val = $(this).val();
+        if (val) {
+          $("#node-input-tagName").val(val);
+          $("#node-input-taglist-row").slideUp(200);
+        }
+      });
+      $(document).on("change", "#node-input-taglist", function () {
+        var val = $(this).val();
+        if (val) {
+          $("#node-input-tagName").val(val);
+        }
+      });
+    }
+    setupBrowse("cip-read");
+  })();
+</script>

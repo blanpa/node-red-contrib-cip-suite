@@ -1,0 +1,77 @@
+<script type="text/javascript">
+  RED.nodes.registerType("cip-pccc-read", {
+    category: "CIP Suite",
+    color: "#999999",
+    defaults: {
+      name: { value: "" },
+      endpoint: { value: "", type: "cip-pccc-endpoint", required: true },
+      address: { value: "N7:0" },
+      count: { value: 1 },
+      pollInterval: { value: 0 }
+    },
+    inputs: 1,
+    outputs: 1,
+    icon: "cip.svg",
+    paletteLabel: "pccc read",
+    label: function () {
+      return this.name || this.address || "pccc read";
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="cip-pccc-read">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
+    <input type="text" id="node-input-endpoint" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-address"><i class="fa fa-bookmark"></i> Address</label>
+    <input type="text" id="node-input-address" placeholder="N7:0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-count"><i class="fa fa-sort-numeric-asc"></i> Count</label>
+    <input type="number" id="node-input-count" placeholder="1" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
+    <input type="number" id="node-input-pollInterval" placeholder="0 = trigger only" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="cip-pccc-read">
+  <p>Reads data from a legacy Allen-Bradley PLC (SLC 500, MicroLogix, PLC-5) using PCCC over EtherNet/IP.</p>
+  <h3>Inputs</h3>
+  <p>An incoming message triggers a read. Override the address via <code>msg.address</code>.</p>
+  <h3>Outputs</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">*</span></dt>
+    <dd>The value(s) read. Single element returns a scalar; count &gt; 1 returns an array.</dd>
+    <dt>address <span class="property-type">string</span></dt>
+    <dd>The PCCC address that was read.</dd>
+    <dt>timestamp <span class="property-type">number</span></dt>
+    <dd>Unix timestamp (ms) of the read.</dd>
+  </dl>
+  <h3>PCCC Addressing</h3>
+  <p>PCCC uses file-based addressing. The format is <code>FileType</code><code>FileNumber</code><code>:Element</code>.</p>
+  <table>
+    <tr><th>Type</th><th>Prefix</th><th>Example</th><th>Description</th></tr>
+    <tr><td>Integer</td><td>N</td><td><code>N7:0</code></td><td>Integer file 7, element 0</td></tr>
+    <tr><td>Float</td><td>F</td><td><code>F8:0</code></td><td>Float file 8, element 0</td></tr>
+    <tr><td>Binary</td><td>B</td><td><code>B3:0/5</code></td><td>Binary file 3, element 0, bit 5</td></tr>
+    <tr><td>Timer</td><td>T</td><td><code>T4:0.ACC</code></td><td>Timer file 4, element 0, accumulator</td></tr>
+    <tr><td>Counter</td><td>C</td><td><code>C5:0.ACC</code></td><td>Counter file 5, element 0, accumulator</td></tr>
+    <tr><td>Status</td><td>S</td><td><code>S:1/5</code></td><td>Status file, word 1, bit 5</td></tr>
+    <tr><td>Output</td><td>O</td><td><code>O:0/0</code></td><td>Output image, word 0, bit 0</td></tr>
+    <tr><td>Input</td><td>I</td><td><code>I:1/0</code></td><td>Input image, word 1, bit 0</td></tr>
+    <tr><td>String</td><td>ST</td><td><code>ST9:0</code></td><td>String file 9, element 0</td></tr>
+    <tr><td>Long</td><td>L</td><td><code>L10:0</code></td><td>Long integer file 10, element 0</td></tr>
+  </table>
+  <h3>Polling</h3>
+  <p>Set a poll interval (in milliseconds) for periodic reads, or leave at 0 for trigger-only mode.
+  Backpressure is applied: if a read is already in-flight, subsequent poll ticks are skipped.</p>
+  <p>Set <b>Count</b> to read multiple consecutive elements starting from the given address.</p>
+</script>
