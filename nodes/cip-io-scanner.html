@@ -12,7 +12,8 @@
       configAssembly: { value: "0" },
       inputSize: { value: "32" },
       outputSize: { value: "32" },
-      udpPort: { value: "2222" }
+      udpPort: { value: "2222" },
+      runIdleHeader: { value: true }
     },
     inputs: 1,
     outputs: 1,
@@ -65,6 +66,12 @@
     <label for="node-input-udpPort"><i class="fa fa-random"></i> UDP Port</label>
     <input type="text" id="node-input-udpPort" placeholder="2222" />
   </div>
+  <div class="form-row">
+    <label for="node-input-runIdleHeader" style="width:auto">
+      <input type="checkbox" id="node-input-runIdleHeader" style="display:inline-block;width:auto;vertical-align:top" />
+      32-bit Run/Idle header (O&rarr;T)
+    </label>
+  </div>
 </script>
 
 <script type="text/html" data-help-name="cip-io-scanner">
@@ -80,23 +87,41 @@
     <dt>Input/Output Assembly <span class="property-type">number</span></dt>
     <dd>Assembly instance numbers. Check your device EDS file or documentation.</dd>
     <dt>Input/Output Size <span class="property-type">number</span></dt>
-    <dd>Data sizes in bytes.</dd>
+    <dd>Data sizes in bytes (application data only — do <b>not</b> count the Run/Idle header here).</dd>
+    <dt>32-bit Run/Idle header <span class="property-type">boolean</span></dt>
+    <dd>Prepends the 4-byte Run/Idle header to the O&rarr;T (output) data, as required
+    by the ODVA AC/DC drive profile and most exclusive-owner I/O. <b>Leave enabled for
+    PowerFlex drives</b> — without it the drive stays in Idle and ignores the output
+    assembly. The node adds the 4 bytes to the negotiated connection size automatically.</dd>
   </dl>
 
   <h3>Inputs</h3>
   <dl class="message-properties">
     <dt>payload <span class="property-type">Buffer</span></dt>
-    <dd>Output data to send to the I/O device.</dd>
-    <dt>command <span class="property-type">string</span></dt>
-    <dd><code>"start"</code> or <code>"stop"</code> I/O scanning.</dd>
+    <dd>Output data (the application assembly only — the Run/Idle header is added for you).</dd>
+    <dt>command / run <span class="property-type">string / boolean</span></dt>
+    <dd><code>command:"run"</code> / <code>run:true</code> sets the Run/Idle header to Run;
+    <code>command:"idle"</code> / <code>run:false</code> sets it to Idle. Can be sent with or
+    without a <code>payload</code>.</dd>
   </dl>
 
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload <span class="property-type">object</span></dt>
-    <dd><code>{ input: Buffer, timestamp: number }</code></dd>
+    <dd><code>{ input: Buffer, parsed: number[], sequence: number, timestamp: number }</code></dd>
   </dl>
 
   <h3>Supported Devices</h3>
   <p>1734 POINT I/O, PowerFlex drives, Kinetix servos, any EtherNet/IP adapter with implicit messaging.</p>
+
+  <h3>PowerFlex 525 example</h3>
+  <p>Basic speed control via the standard ODVA AC-drive assemblies:</p>
+  <ul>
+    <li>Output Assembly <code>20</code>, Output Size <code>4</code> (Logic Command word + Speed Reference word)</li>
+    <li>Input Assembly <code>70</code>, Input Size <code>4</code> (Logic Status word + Speed Feedback word)</li>
+    <li>Config Assembly <code>6</code>, RPI <code>20</code>&ndash;<code>100</code> ms, Run/Idle header <b>on</b></li>
+  </ul>
+  <p>(With DataLinks use 21/71 and size 20 instead.) Confirm the exact assembly numbers,
+  the Logic Command bit map, and the Speed Reference scaling against PowerFlex 520-series
+  publication <i>520-UM001</i> for your drive&rsquo;s configuration.</p>
 </script>

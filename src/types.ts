@@ -320,6 +320,7 @@ export interface CipIOScannerConfig {
   inputSize: string;         // bytes
   outputSize: string;
   udpPort: string;           // local UDP port for I/O (default 2222)
+  runIdleHeader?: boolean;   // prepend 32-bit Run/Idle header on O→T (ODVA default)
 }
 
 // ── Utility types ──

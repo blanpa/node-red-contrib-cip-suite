@@ -60,6 +60,11 @@ module.exports = function (RED) {
         node._inputSize = parseInt(config.inputSize, 10) || 32;
         node._outputSize = parseInt(config.outputSize, 10) || 32;
         node._udpPort = parseInt(config.udpPort, 10) || IO_UDP_PORT_DEFAULT;
+        // ODVA O→T connections (drives, exclusive-owner I/O) expect a 32-bit
+        // Run/Idle header ahead of the output assembly. Default on; required for
+        // PowerFlex drives to leave Idle and act on the output assembly.
+        node._runIdleHeader = config.runIdleHeader !== false;
+        node._runMode = true; // Run = drive acts on outputs; Idle = drive ignores them
         node._tcpSocket = null;
         node._udpSocket = null;
         node._sessionHandle = 0;
@@ -129,8 +134,10 @@ module.exports = function (RED) {
             foData.writeUInt32LE(rpiMicroseconds, off);
             off += 4;
             // O→T Network Connection Parameters (16-bit)
-            // Point-to-point, Class 1, Fixed size
-            const otConnParams = (node._outputSize & 0x01FF) | 0x4000; // Fixed, Class 1
+            // Point-to-point, Class 1, Fixed size. When the 32-bit Run/Idle header
+            // is used, the negotiated connection size must include those 4 bytes.
+            const otSize = node._outputSize + (node._runIdleHeader ? 4 : 0);
+            const otConnParams = (otSize & 0x01FF) | 0x4000; // Fixed, Class 1
             foData.writeUInt16LE(otConnParams, off);
             off += 2;
             // T→O RPI (microseconds)
@@ -243,8 +250,9 @@ module.exports = function (RED) {
             const seqCount = node._seqCount & 0xFFFFFFFF;
             // CPF: 2 items
             // Item 1: Sequenced Address (type=0x8002) = connID(4) + seqNum(4)
-            // Item 2: Connected Data (type=0x00B1) = seqCount(2) + data
-            const connDataLen = 2 + node._outputSize;
+            // Item 2: Connected Data (type=0x00B1) = seqCount(2) [+ Run/Idle hdr(4)] + data
+            const headerLen = node._runIdleHeader ? 4 : 0;
+            const connDataLen = 2 + headerLen + node._outputSize;
             const totalLen = 2 + (2 + 2 + 8) + (2 + 2 + connDataLen);
             const buf = Buffer.alloc(totalLen);
             let off = 0;
@@ -266,6 +274,12 @@ module.exports = function (RED) {
             off += 2;
             buf.writeUInt16LE(node._seqCount & 0xFFFF, off);
             off += 2;
+            // 32-bit Run/Idle header (bit 0: 1=Run, 0=Idle). Without this set to Run,
+            // ODVA drives keep the output assembly idle and never act on commands.
+            if (node._runIdleHeader) {
+                buf.writeUInt32LE(node._runMode ? 1 : 0, off);
+                off += 4;
+            }
             node._outputData.copy(buf, off);
             return buf;
         }
@@ -286,6 +300,7 @@ module.exports = function (RED) {
                 node.log(`I/O connection established: ${node._targetAddress} ` +
                     `input=Asm${node._inputAssembly}(${node._inputSize}B) ` +
                     `output=Asm${node._outputAssembly}(${node._outputSize}B) ` +
+                    `runIdleHeader=${node._runIdleHeader ? "on" : "off"} ` +
                     `RPI=${node._rpi}ms`);
             }
             catch (err) {
@@ -487,8 +502,26 @@ module.exports = function (RED) {
         }
         // ── Input handler (set output data) ──
         node.on("input", function (msg) {
+            // Run/Idle control via the 32-bit header. Lets a flow command the drive
+            // into Run/Idle independently of (or without) sending new output data.
+            let modeChanged = false;
+            if (msg.command === "run" || msg.run === true) {
+                node._runMode = true;
+                modeChanged = true;
+            }
+            else if (msg.command === "idle" || msg.run === false) {
+                node._runMode = false;
+                modeChanged = true;
+            }
             if (!node._active) {
                 node.error("I/O connection not active", msg);
+                return;
+            }
+            // Allow a pure Run/Idle toggle with no fresh output payload.
+            if (msg.payload === undefined || msg.payload === null) {
+                if (!modeChanged) {
+                    node.error("Invalid output data. Provide Buffer via msg.payload", msg);
+                }
                 return;
             }
             let outputData;

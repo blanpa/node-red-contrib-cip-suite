@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.2 — 2026-06-22
+
+### Fixed
+- **cip-io-scanner** — Add the 32-bit Run/Idle header to O→T (output) cyclic data.
+  ODVA AC/DC drive-profile devices (PowerFlex 525 etc.) stayed in Idle and ignored
+  the output assembly without it, so implicit control never took effect. The header
+  is on by default (configurable), its 4 bytes are added to the negotiated O→T
+  connection size, and Run/Idle can be commanded at runtime via
+  `msg.command:"run"`/`"idle"` or `msg.run:true`/`false`. (#3)
+
 ## 0.0.1 — Initial Release
 
 ### Nodes
