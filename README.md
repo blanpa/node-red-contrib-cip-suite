@@ -111,6 +111,35 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | Timeout (ms) | 5000 | Connection/request timeout |
 | Retry (ms) | 5000 | Reconnection interval |
 
+### cip-io-scanner
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Target IP | — | I/O adapter / drive IP address |
+| Port | 44818 | EtherNet/IP port |
+| RPI (ms) | 100 | Requested Packet Interval (cyclic rate) |
+| Input/Output Assembly | 100 / 150 | Assembly instance numbers (see device EDS) |
+| Config Assembly | 0 | Optional config assembly instance |
+| Input/Output Size | 32 | Application data size in bytes (excl. Run/Idle header) |
+| UDP Port | 2222 | Local UDP port for implicit I/O |
+| 32-bit Run/Idle header | on | Prepend the Run/Idle header on O→T. Required by the ODVA AC/DC drive profile — leave **on** for PowerFlex drives, or they stay idle and ignore the output assembly |
+
+## Drive Control (PowerFlex 525)
+
+A PowerFlex 525 is controlled with **implicit** (Class 1) messaging via `cip-io-scanner` — not with the tag nodes (it has no Logix tags). Basic speed control uses the standard ODVA AC-drive assemblies:
+
+| Setting | Value |
+|---------|-------|
+| Output Assembly / Size | `20` / `4` (Logic Command word + Speed Reference word) |
+| Input Assembly / Size | `70` / `4` (Logic Status word + Speed Feedback word) |
+| Config Assembly | `6` |
+| RPI | `20`–`100` ms |
+| 32-bit Run/Idle header | on |
+
+Send the 4 output bytes as a `Buffer` in `msg.payload` (bytes 0-1 = Logic Command, bytes 2-3 = Speed Reference, little-endian). Toggle the drive between Run and Idle with `msg.command:"run"`/`"idle"` (or `msg.run:true`/`false`).
+
+Device **parameters** (read/write) use explicit messaging via `cip-param` (Parameter Object 0x0F), not `cip-write`. Confirm the exact assembly numbers, Logic Command bit map, and Speed Reference scaling against PowerFlex publication *520-UM001* — they differ between the ODVA AC-drive assemblies (20/70) and the PowerFlex-native ones (21/71).
+
 ## Features
 
 ### Connection Management
