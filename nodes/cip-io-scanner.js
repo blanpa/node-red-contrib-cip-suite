@@ -161,10 +161,11 @@ module.exports = function (RED) {
             // Input (T→O): class 0x04, instance = inputAssembly
             pathSegments.push(Buffer.from([0x20, 0x04, 0x24, node._inputAssembly & 0xFF]));
             const connPath = Buffer.concat(pathSegments);
-            // Connection path size in words
+            // Connection path size in words. The connection path follows immediately
+            // — there is NO reserved/pad byte between the path size and the path in a
+            // Forward_Open. (A stray pad byte here shifts the path by one octet and
+            // leaves a trailing byte, which targets reject as CIP 0x15 "too much data".)
             foData.writeUInt8(connPath.length / 2, off++);
-            // Reserved
-            off++; // pad out foData to make room
             // Build complete CIP request
             // Service(1) + PathSize(1) + Path(4) + ForwardOpenData + ConnectionPath
             const cipReq = Buffer.alloc(2 + cmPath.length + off + connPath.length);

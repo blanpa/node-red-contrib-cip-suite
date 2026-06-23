@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-cip-suite",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Comprehensive Node-RED nodes for Allen-Bradley and CIP-capable devices via EtherNet/IP — ControlLogix, CompactLogix, Micro800, SLC500, MicroLogix, PLC-5, and third-party CIP devices",
   "license": "MIT",
   "author": "blanpa",
