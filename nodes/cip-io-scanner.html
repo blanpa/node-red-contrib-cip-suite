@@ -13,7 +13,14 @@
       inputSize: { value: "32" },
       outputSize: { value: "32" },
       udpPort: { value: "2222" },
-      runIdleHeader: { value: true }
+      runIdleHeader: { value: true },
+      electronicKeying: { value: false },
+      keyVendorId: { value: "0" },
+      keyDeviceType: { value: "0" },
+      keyProductCode: { value: "0" },
+      keyMajorRev: { value: "0" },
+      keyMinorRev: { value: "0" },
+      keyCompatibility: { value: false }
     },
     inputs: 1,
     outputs: 1,
@@ -72,6 +79,38 @@
       32-bit Run/Idle header (O&rarr;T)
     </label>
   </div>
+  <div class="form-row">
+    <label for="node-input-electronicKeying" style="width:auto">
+      <input type="checkbox" id="node-input-electronicKeying" style="display:inline-block;width:auto;vertical-align:top" />
+      Electronic keying
+    </label>
+  </div>
+  <div class="form-row">
+    <label for="node-input-keyVendorId"><i class="fa fa-key"></i> Key Vendor ID</label>
+    <input type="text" id="node-input-keyVendorId" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-keyDeviceType"><i class="fa fa-key"></i> Key Device Type</label>
+    <input type="text" id="node-input-keyDeviceType" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-keyProductCode"><i class="fa fa-key"></i> Key Product Code</label>
+    <input type="text" id="node-input-keyProductCode" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-keyMajorRev"><i class="fa fa-key"></i> Key Major Rev</label>
+    <input type="text" id="node-input-keyMajorRev" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-keyMinorRev"><i class="fa fa-key"></i> Key Minor Rev</label>
+    <input type="text" id="node-input-keyMinorRev" placeholder="0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-keyCompatibility" style="width:auto">
+      <input type="checkbox" id="node-input-keyCompatibility" style="display:inline-block;width:auto;vertical-align:top" />
+      Compatibility (accept compatible revisions)
+    </label>
+  </div>
 </script>
 
 <script type="text/html" data-help-name="cip-io-scanner">
@@ -93,6 +132,14 @@
     by the ODVA AC/DC drive profile and most exclusive-owner I/O. <b>Leave enabled for
     PowerFlex drives</b> — without it the drive stays in Idle and ignores the output
     assembly. The node adds the 4 bytes to the negotiated connection size automatically.</dd>
+    <dt>Electronic keying <span class="property-type">boolean</span></dt>
+    <dd>Off by default — the connection path carries <b>no</b> key segment, meaning
+    &ldquo;don&rsquo;t check identity&rdquo;, which every target must accept and is the most
+    compatible choice. Enable it only if a strict target rejects an unkeyed connection;
+    then fill in the Vendor ID, Device Type, Product Code, and Major/Minor revision to
+    match the device (from its EDS file or identity object). The <b>Compatibility</b>
+    checkbox sets the major-revision compatibility bit so the target accepts any
+    compatible revision instead of an exact match.</dd>
   </dl>
 
   <h3>Inputs</h3>
@@ -115,13 +162,15 @@
   <p>1734 POINT I/O, PowerFlex drives, Kinetix servos, any EtherNet/IP adapter with implicit messaging.</p>
 
   <h3>PowerFlex 525 example</h3>
-  <p>Basic speed control via the standard ODVA AC-drive assemblies:</p>
+  <p>Values verified against a working PLC&rarr;PF525 I/O connection (Wireshark capture):</p>
   <ul>
-    <li>Output Assembly <code>20</code>, Output Size <code>4</code> (Logic Command word + Speed Reference word)</li>
-    <li>Input Assembly <code>70</code>, Input Size <code>4</code> (Logic Status word + Speed Feedback word)</li>
-    <li>Config Assembly <code>6</code>, RPI <code>20</code>&ndash;<code>100</code> ms, Run/Idle header <b>on</b></li>
+    <li>Output Assembly <code>2</code>, Output Size <code>4</code> (Logic Command word + Speed Reference word)</li>
+    <li>Input Assembly <code>1</code>, Input Size <code>8</code> (Logic Status word + Speed Feedback + datalinks)</li>
+    <li>Config Assembly <code>6</code>, RPI <code>100</code> ms, Run/Idle header <b>on</b></li>
   </ul>
-  <p>(With DataLinks use 21/71 and size 20 instead.) Confirm the exact assembly numbers,
-  the Logic Command bit map, and the Speed Reference scaling against PowerFlex 520-series
+  <p>These are the drive&rsquo;s native assembly instances (Output&nbsp;2 / Input&nbsp;1 / Config&nbsp;6),
+  which differ from the generic ODVA AC-drive assemblies (20/70). Leave electronic keying
+  <b>off</b> first; only enable it if the drive refuses the unkeyed connection. Confirm the
+  Logic Command bit map and the Speed Reference scaling against PowerFlex 520-series
   publication <i>520-UM001</i> for your drive&rsquo;s configuration.</p>
 </script>

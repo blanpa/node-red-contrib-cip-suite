@@ -123,22 +123,26 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | Input/Output Size | 32 | Application data size in bytes (excl. Run/Idle header) |
 | UDP Port | 2222 | Local UDP port for implicit I/O |
 | 32-bit Run/Idle header | on | Prepend the Run/Idle header on O→T. Required by the ODVA AC/DC drive profile — leave **on** for PowerFlex drives, or they stay idle and ignore the output assembly |
+| Electronic keying | off | Add an Electronic Key segment to the connection path. **Off = no key** ("don't check identity"), the most compatible choice. Enable only if a strict target rejects an unkeyed connection, then fill in Vendor ID / Device Type / Product Code / Major+Minor revision (from the device EDS). The compatibility bit accepts compatible revisions instead of an exact match |
+
+The produced/consumed assemblies are addressed with **Connection Point** path segments and the connection is opened with the transport direction set to **Server** (`0x81`) — both required by stricter drive firmware such as the PowerFlex 525.
 
 ## Drive Control (PowerFlex 525)
 
-A PowerFlex 525 is controlled with **implicit** (Class 1) messaging via `cip-io-scanner` — not with the tag nodes (it has no Logix tags). Basic speed control uses the standard ODVA AC-drive assemblies:
+A PowerFlex 525 is controlled with **implicit** (Class 1) messaging via `cip-io-scanner` — not with the tag nodes (it has no Logix tags). The drive's **native** assembly instances (verified against a working PLC→PF525 capture) are:
 
 | Setting | Value |
 |---------|-------|
-| Output Assembly / Size | `20` / `4` (Logic Command word + Speed Reference word) |
-| Input Assembly / Size | `70` / `4` (Logic Status word + Speed Feedback word) |
+| Output Assembly / Size | `2` / `4` (Logic Command word + Speed Reference word) |
+| Input Assembly / Size | `1` / `8` (Logic Status word + Speed Feedback + datalinks) |
 | Config Assembly | `6` |
-| RPI | `20`–`100` ms |
+| RPI | `100` ms (the PLC requests 0 and the drive negotiates ~98 ms) |
 | 32-bit Run/Idle header | on |
+| Electronic keying | off (enable only if the drive refuses the unkeyed connection) |
 
-Send the 4 output bytes as a `Buffer` in `msg.payload` (bytes 0-1 = Logic Command, bytes 2-3 = Speed Reference, little-endian). Toggle the drive between Run and Idle with `msg.command:"run"`/`"idle"` (or `msg.run:true`/`false`).
+These native instances (Output 2 / Input 1 / Config 6) differ from the generic ODVA AC-drive assemblies (20/70). Send the 4 output bytes as a `Buffer` in `msg.payload` (bytes 0-1 = Logic Command, bytes 2-3 = Speed Reference, little-endian). Toggle the drive between Run and Idle with `msg.command:"run"`/`"idle"` (or `msg.run:true`/`false`).
 
-Device **parameters** (read/write) use explicit messaging via `cip-param` (Parameter Object 0x0F), not `cip-write`. Confirm the exact assembly numbers, Logic Command bit map, and Speed Reference scaling against PowerFlex publication *520-UM001* — they differ between the ODVA AC-drive assemblies (20/70) and the PowerFlex-native ones (21/71).
+Device **parameters** (read/write) use explicit messaging via `cip-param` (Parameter Object 0x0F), not `cip-write`. Confirm the exact assembly numbers, Logic Command bit map, and Speed Reference scaling against PowerFlex publication *520-UM001* — they differ between the ODVA AC-drive assemblies (20/70) and the PowerFlex-native ones.
 
 ## Features
 
@@ -184,6 +188,7 @@ docker compose up -d
 | `plc-micro` | Micro800 simulator | 44820 |
 | `plc-mlx` | MicroLogix simulator (PCCC) | 44821 |
 | `plc-plc5` | PLC-5 simulator (PCCC) | 44822 |
+| `drive-powerflex525` | PowerFlex 525 drive — implicit Class 1 I/O | 44823 (TCP) + 2222 (UDP) |
 | `node-red` | Node-RED with pre-loaded test flows | 11880 |
 
 ### Simulator Profiles
@@ -195,6 +200,7 @@ Each profile provides a realistic tag set:
 - **Micro800** — 24 I/O tags (10 DO + 14 DI, all BOOL)
 - **MicroLogix** — PCCC registers (N7, F8, B3, T4, C5, S)
 - **PLC-5** — PCCC registers
+- **PowerFlex 525** — no tags; implicit Class 1 I/O only (assemblies: Output 2 / Input 1 / Config 6). Models the drive's strict Forward_Open acceptance — the connection is granted only when the produced/consumed assemblies use Connection Point path segments and the transport is Server + Class 1
 
 ### Simulated CIP Services
 
@@ -209,6 +215,7 @@ Each profile provides a realistic tag set:
 | GetAttributeSingle | 0x0E | Single attribute read |
 | ExecutePCCC | 0x4B | PCCC over CIP |
 | MultipleServicePacket | 0x0A | Batch operations |
+| Implicit I/O (Class 1) | — | Cyclic UDP assemblies for the PowerFlex 525 drive profile (ForwardOpen + UDP 2222) |
 
 ### Quick Start
 
@@ -248,6 +255,14 @@ Tests cover:
 - PCCC address parsing (all file types, sub-elements, bit access)
 - PCCC command building and response parsing
 - CIP path building (8-bit/16-bit segments, attributeId edge cases)
+- **Forward_Open framing** — strict PowerFlex 525 acceptance (transport byte, Connection Point vs Instance segments, electronic key parsing)
+- **cip-io-scanner end-to-end** — the real node drives the PowerFlex 525 simulator over TCP ForwardOpen + cyclic UDP I/O, asserting the connection establishes and data flows both directions
+
+To exercise implicit I/O manually without Docker, run the drive simulator directly and point a `cip-io-scanner` node (Output 2 / Input 1 / Config 6, sizes 4 / 8, Run/Idle on) at `127.0.0.1:44818`:
+
+```bash
+npm run sim:pf525
+```
 
 ## API Reference
 

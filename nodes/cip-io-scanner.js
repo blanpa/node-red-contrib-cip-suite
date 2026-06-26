@@ -65,6 +65,17 @@ module.exports = function (RED) {
         // PowerFlex drives to leave Idle and act on the output assembly.
         node._runIdleHeader = config.runIdleHeader !== false;
         node._runMode = true; // Run = drive acts on outputs; Idle = drive ignores them
+        // Electronic keying. Default off = no key segment ("don't check identity"),
+        // which every target must accept and is the most compatible choice. Enable
+        // only if a strict target rejects an unkeyed connection and you need to match
+        // its Vendor/DeviceType/ProductCode/Revision exactly.
+        node._electronicKeying = config.electronicKeying === true;
+        node._keyVendorId = parseInt(config.keyVendorId || "", 10) || 0;
+        node._keyDeviceType = parseInt(config.keyDeviceType || "", 10) || 0;
+        node._keyProductCode = parseInt(config.keyProductCode || "", 10) || 0;
+        node._keyMajorRev = parseInt(config.keyMajorRev || "", 10) || 0;
+        node._keyMinorRev = parseInt(config.keyMinorRev || "", 10) || 0;
+        node._keyCompatibility = config.keyCompatibility === true;
         node._tcpSocket = null;
         node._udpSocket = null;
         node._sessionHandle = 0;
@@ -147,19 +158,41 @@ module.exports = function (RED) {
             const toConnParams = (node._inputSize & 0x01FF) | 0x4000; // Fixed, Class 1
             foData.writeUInt16LE(toConnParams, off);
             off += 2;
-            // Transport Type/Trigger: Class 1, Cyclic, Server
-            foData.writeUInt8(0x01, off++); // Direction=client, Class 1
+            // Transport Type/Trigger: Direction=Server (bit 7), Cyclic trigger, Class 1.
+            // The target produces on T→O, so it is the server end of the connection —
+            // the direction bit MUST be set. A bare 0x01 (Direction=Client) makes strict
+            // drive firmware reject the ForwardOpen with CIP general status 0x01 /
+            // extended 0x0103 ("Transport Class and Trigger combination not supported").
+            foData.writeUInt8(0x81, off++);
             // Connection Path
-            // → Config assembly (optional), → Output assembly, → Input assembly
+            // → [Electronic Key] → Config assembly (optional) → Output → Input
             const pathSegments = [];
+            // Electronic Key segment (optional). Omitting it means "no keying"; targets
+            // must accept that. Strict drives may instead want a key matching their
+            // identity (Studio 5000 always sends one built from the EDS file).
+            if (node._electronicKeying) {
+                const key = Buffer.alloc(10);
+                key.writeUInt8(0x34, 0); // Logical/Special: Electronic Key segment
+                key.writeUInt8(0x04, 1); // Key Format 4
+                key.writeUInt16LE(node._keyVendorId & 0xFFFF, 2);
+                key.writeUInt16LE(node._keyDeviceType & 0xFFFF, 4);
+                key.writeUInt16LE(node._keyProductCode & 0xFFFF, 6);
+                // Major Revision bit 7 = compatibility bit (1 = accept compatible revisions)
+                key.writeUInt8((node._keyMajorRev & 0x7F) | (node._keyCompatibility ? 0x80 : 0x00), 8);
+                key.writeUInt8(node._keyMinorRev & 0xFF, 9);
+                pathSegments.push(key);
+            }
             if (node._configAssembly > 0) {
-                // Config: class 0x04 (Assembly), instance = configAssembly
+                // Config: class 0x04 (Assembly), Instance segment (0x24)
                 pathSegments.push(Buffer.from([0x20, 0x04, 0x24, node._configAssembly & 0xFF]));
             }
-            // Output (O→T): class 0x04, instance = outputAssembly
-            pathSegments.push(Buffer.from([0x20, 0x04, 0x24, node._outputAssembly & 0xFF]));
-            // Input (T→O): class 0x04, instance = inputAssembly
-            pathSegments.push(Buffer.from([0x20, 0x04, 0x24, node._inputAssembly & 0xFF]));
+            // Output (O→T) and Input (T→O) are the produced/consumed assemblies, so they
+            // are addressed with Connection Point segments (0x2C), NOT plain Instance
+            // segments (0x24). Logix targets tolerate 0x24, but stricter drive firmware
+            // (PowerFlex 525) rejects it — a verified working PLC→PF525 ForwardOpen uses
+            // Connection Point segments here.
+            pathSegments.push(Buffer.from([0x20, 0x04, 0x2C, node._outputAssembly & 0xFF]));
+            pathSegments.push(Buffer.from([0x20, 0x04, 0x2C, node._inputAssembly & 0xFF]));
             const connPath = Buffer.concat(pathSegments);
             // Connection path size in words. The connection path follows immediately
             // — there is NO reserved/pad byte between the path size and the path in a

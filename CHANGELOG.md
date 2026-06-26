@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.0.4 — 2026-06-26
+
+### Fixed
+- **cip-io-scanner** — Correct the Forward_Open framing so the I/O connection is
+  accepted by strict drive firmware (PowerFlex 525), which rejected the previous
+  framing with CIP general status `0x01` (Connection Failure):
+  - **Transport Type/Trigger** is now `0x81` (Direction=Server, Class 1) instead of
+    `0x01`. The target produces on T→O, so it is the server end — the direction bit
+    must be set, or strict targets reply `0x01` / extended `0x0103` ("Transport Class
+    and Trigger combination not supported").
+  - The produced/consumed **Output and Input assemblies** are now addressed with
+    **Connection Point** segments (`0x2C`) instead of plain Instance segments (`0x24`).
+    Logix targets tolerate `0x24`; the PF525 does not. (The Config assembly still uses
+    an Instance segment, matching a verified working PLC→PF525 capture.)
+
+### Added
+- **cip-io-scanner** — Optional **Electronic keying**. Off by default (no key segment =
+  "don't check identity", the most compatible choice). When enabled, the connection path
+  carries an Electronic Key built from configurable Vendor ID / Device Type / Product Code /
+  Major+Minor revision, with a compatibility-bit option. (#3)
+
+### Changed
+- README and node help now document the PowerFlex 525 with its **native** assembly
+  instances (Output 2 / Input 1 / Config 6), verified against a working capture, instead
+  of the generic ODVA AC-drive assemblies (20/70).
+
+## 0.0.3 — 2026-06-23
+
+### Fixed
+- **cip-io-scanner** — Remove a stray pad byte after the Connection Path Size field in
+  Forward_Open. The extra `0x00` shifted the whole connection path one octet and left a
+  trailing byte, which targets reject as CIP general status `0x15` ("too much data") — so
+  the I/O connection failed identically regardless of assembly, size, RPI, or Run/Idle
+  setting. The connection path now follows the size field immediately, per spec. (#3)
+
 ## 0.0.2 — 2026-06-22
 
 ### Fixed

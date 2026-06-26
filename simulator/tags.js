@@ -140,6 +140,14 @@ function createPLC5Tags() {
   return tags;
 }
 
+/**
+ * PowerFlex 525 drive: no Logix tags. Control is via implicit (Class 1) I/O
+ * assemblies, not the tag database.
+ */
+function createPowerFlexTags() {
+  return new Map();
+}
+
 // ─── Tag set registry ────────────────────────────────────────────────
 
 const tagSetCreators = {
@@ -148,6 +156,7 @@ const tagSetCreators = {
   micro800: createMicro800Tags,
   micrologix: createMicroLogixTags,
   plc5: createPLC5Tags,
+  powerflex525: createPowerFlexTags,
 };
 
 /**

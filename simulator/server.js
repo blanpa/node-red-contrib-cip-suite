@@ -11,13 +11,28 @@
  */
 
 const net = require("net");
+const dgram = require("dgram");
 const { createDefaultTags, CIP_TYPES } = require("./tags");
 const { getProfile } = require("./profiles");
+const { validateDriveForwardOpen } = require("./forward-open");
 
 const PORT = parseInt(process.env.EIP_PORT, 10) || 44818;
+const IO_UDP_PORT = parseInt(process.env.IO_UDP_PORT, 10) || 2222;
 const profile = getProfile(process.env.PLC_TYPE);
 const tags = createDefaultTags(profile.tagSet);
 let nextSession = 1;
+
+// Active implicit (Class 1) I/O connection state, used by the drive profiles.
+const ioState = {
+  active: false,
+  toConnId: 0,      // T→O connection ID the drive produces on
+  otConnId: 0,      // O→T connection ID the scanner produces on
+  inputSize: 8,     // bytes produced on T→O
+  seq: 0,
+  peer: null,       // { address, port } learned from the scanner's first O→T packet
+  producer: null,   // setInterval handle
+  apiMs: 100,       // negotiated packet interval
+};
 
 // Simulator state for new objects
 let simAxisPosition = 0.0;
@@ -74,10 +89,20 @@ function enipPacket(cmd, session, ctx, data) {
  * @param {number} service - original request service code
  * @param {number} status - general status (0 = success)
  * @param {Buffer} [serviceData] - response payload
+ * @param {number} [extended] - optional 16-bit extended status word
  * @returns {Buffer}
  */
-function cipResponse(service, status, serviceData) {
+function cipResponse(service, status, serviceData, extended) {
   const data = serviceData || Buffer.alloc(0);
+  if (extended !== undefined && extended !== null) {
+    const hdr = Buffer.alloc(6);
+    hdr.writeUInt8(service | 0x80, 0); // reply service
+    hdr.writeUInt8(0, 1);              // reserved
+    hdr.writeUInt8(status, 2);         // general status
+    hdr.writeUInt8(1, 3);              // extended status size (1 word)
+    hdr.writeUInt16LE(extended & 0xffff, 4);
+    return Buffer.concat([hdr, data]);
+  }
   const hdr = Buffer.alloc(4);
   hdr.writeUInt8(service | 0x80, 0); // reply service
   hdr.writeUInt8(0, 1);              // reserved
@@ -142,6 +167,39 @@ function sendUnitDataReply(session, ctx, cipReply, connId, seqNum) {
  * @returns {Buffer} CIP reply
  */
 function handleForwardOpen(reqData) {
+  // Strict AC-drive (PowerFlex 525) acceptance: validate the connection path and
+  // transport the way real drive firmware does, and arm cyclic UDP I/O on success.
+  if (profile.strictDriveForwardOpen && profile.ioConfig) {
+    const result = validateDriveForwardOpen(reqData, profile.ioConfig);
+    if (!result.ok) {
+      console.log(`  ForwardOpen → REJECTED 0x${result.status.toString(16)} ` +
+        `(ext 0x${result.extended.toString(16).padStart(4, "0")}): ${result.reason}`);
+      return cipResponse(0x54, result.status, undefined, result.extended);
+    }
+    const p = result.parsed;
+    ioState.otConnId = p.otConnId;
+    ioState.toConnId = 0x0f520000 + (p.connSerial & 0xffff);
+    ioState.inputSize = profile.ioConfig.inputSize;
+    ioState.apiMs = Math.max(10, Math.round((p.toRpi || 100000) / 1000));
+    ioState.active = true;
+    ioState.peer = null; // learned from the first inbound O→T packet
+    console.log(`  ForwardOpen → ACCEPTED (cfg=${profile.ioConfig.configInstance} ` +
+      `out=${profile.ioConfig.outputInstance} in=${profile.ioConfig.inputInstance}, ` +
+      `transport=0x${p.transport.toString(16)}, API=${ioState.apiMs}ms) — awaiting O→T packets`);
+
+    const data = Buffer.alloc(26);
+    data.writeUInt32LE(p.otConnId, 0);   // O→T connection ID (echo originator)
+    data.writeUInt32LE(ioState.toConnId, 4); // T→O connection ID (we assign)
+    data.writeUInt16LE(p.connSerial, 8);
+    data.writeUInt16LE(p.vendorId, 10);
+    data.writeUInt32LE(p.origSerial, 12);
+    data.writeUInt32LE(p.otRpi || 100000, 16); // O→T API
+    data.writeUInt32LE(p.toRpi || 100000, 20); // T→O API
+    data.writeUInt8(0, 24);
+    data.writeUInt8(0, 25);
+    return cipResponse(0x54, 0, data);
+  }
+
   // Extract T->O Connection ID from request (offset 4-7)
   const toConnId = reqData.length >= 8 ? reqData.readUInt32LE(4) : 0xAAAA0001;
 
@@ -166,6 +224,11 @@ function handleForwardOpen(reqData) {
  * @returns {Buffer}
  */
 function handleForwardClose() {
+  if (ioState.active) {
+    stopIoProducer();
+    ioState.active = false;
+    console.log("  ForwardClose → I/O connection closed");
+  }
   const data = Buffer.alloc(10);
   data.writeUInt16LE(1, 0);           // connection serial
   data.writeUInt16LE(0, 2);           // vendor
@@ -173,6 +236,95 @@ function handleForwardClose() {
   data.writeUInt8(0, 8);              // reply size
   data.writeUInt8(0, 9);              // reserved
   return cipResponse(0x4e, 0, data);
+}
+
+// ─── Implicit (Class 1) UDP I/O ─────────────────────────────────────
+
+let ioUdpSocket = null;
+
+/**
+ * Build a T→O cyclic data packet (drive → scanner): Sequenced Address item +
+ * Connected Data item (seqCount + input assembly bytes). No Run/Idle header on
+ * the T→O direction.
+ * @returns {Buffer}
+ */
+function buildIoInputPacket() {
+  ioState.seq = (ioState.seq + 1) & 0xffffffff;
+
+  // Input assembly: word 0 = Logic Status (running/ready bits), word 1 = Speed
+  // Feedback (ramps), remaining bytes 0. Gives the scanner changing data so it
+  // emits on change.
+  const input = Buffer.alloc(ioState.inputSize);
+  if (ioState.inputSize >= 2) input.writeUInt16LE(0x0007, 0);           // Ready+Active+CommandedRef
+  if (ioState.inputSize >= 4) input.writeUInt16LE(ioState.seq * 10 & 0xffff, 2); // speed feedback ramp
+
+  const connDataLen = 2 + input.length;
+  const total = 2 + (2 + 2 + 8) + (2 + 2 + connDataLen);
+  const buf = Buffer.alloc(total);
+  let off = 0;
+  buf.writeUInt16LE(2, off); off += 2;                 // item count
+  buf.writeUInt16LE(0x8002, off); off += 2;            // Sequenced Address item
+  buf.writeUInt16LE(8, off); off += 2;
+  buf.writeUInt32LE(ioState.toConnId, off); off += 4;  // T→O connection ID
+  buf.writeUInt32LE(ioState.seq, off); off += 4;       // sequence number
+  buf.writeUInt16LE(0x00b1, off); off += 2;            // Connected Data item
+  buf.writeUInt16LE(connDataLen, off); off += 2;
+  buf.writeUInt16LE(ioState.seq & 0xffff, off); off += 2; // seq count
+  input.copy(buf, off);
+  return buf;
+}
+
+/**
+ * Parse an inbound O→T packet (scanner → drive): learn the peer, log Run/Idle.
+ */
+function handleIoOutputPacket(msg, rinfo) {
+  if (!ioState.active) return;
+  if (!ioState.peer) {
+    ioState.peer = { address: rinfo.address, port: rinfo.port };
+    console.log(`  [I/O] first O→T packet from ${rinfo.address}:${rinfo.port} — starting T→O production`);
+    startIoProducer();
+  }
+  // Decode CPF to read the Run/Idle header (first 4 bytes of connected data).
+  try {
+    const itemCount = msg.readUInt16LE(0);
+    let off = 2;
+    for (let i = 0; i < itemCount && off + 4 <= msg.length; i++) {
+      const typeId = msg.readUInt16LE(off);
+      const len = msg.readUInt16LE(off + 2);
+      off += 4;
+      if (typeId === 0x00b1 && len >= 6) {
+        const runIdle = msg.readUInt32LE(off + 2) & 0x01; // after 2-byte seqCount
+        if (runIdle !== ioState._lastRun) {
+          ioState._lastRun = runIdle;
+          console.log(`  [I/O] scanner Run/Idle header = ${runIdle ? "RUN" : "IDLE"}`);
+        }
+      }
+      off += len;
+    }
+  } catch (_) { /* ignore malformed */ }
+}
+
+function startIoProducer() {
+  stopIoProducer();
+  ioState.producer = setInterval(() => {
+    if (!ioState.active || !ioState.peer || !ioUdpSocket) return;
+    const pkt = buildIoInputPacket();
+    ioUdpSocket.send(pkt, 0, pkt.length, ioState.peer.port, ioState.peer.address);
+  }, ioState.apiMs);
+  if (ioState.producer.unref) ioState.producer.unref();
+}
+
+function stopIoProducer() {
+  if (ioState.producer) { clearInterval(ioState.producer); ioState.producer = null; }
+}
+
+function startIoUdpServer() {
+  ioUdpSocket = dgram.createSocket("udp4");
+  ioUdpSocket.on("message", handleIoOutputPacket);
+  ioUdpSocket.on("error", (err) => console.error(`  [I/O] UDP error: ${err.message}`));
+  ioUdpSocket.bind(IO_UDP_PORT, () => {
+    console.log(`  [I/O] implicit messaging UDP listening on :${IO_UDP_PORT}`);
+  });
 }
 
 /**
@@ -1465,9 +1617,13 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`    Tag browse:        ${profile.supportsTagBrowse ? "yes" : "NO"}`);
   console.log(`    PCCC:              ${profile.supportsPCCC ? "yes" : "NO"}`);
   console.log(`    ControllerProps:   ${profile.supportsReadControllerProps ? "yes" : "NO"}`);
+  console.log(`    Implicit I/O:      ${profile.supportsImplicitIO ? "yes (UDP " + IO_UDP_PORT + ")" : "NO"}`);
   console.log("-------------------------------------------");
   for (const [name, tag] of tags) {
     console.log(`  ${name} (${tag.typeName}) = ${tag.value}`);
   }
   console.log("===========================================");
+
+  // Drive profiles serve cyclic Class 1 I/O over UDP.
+  if (profile.supportsImplicitIO) startIoUdpServer();
 });

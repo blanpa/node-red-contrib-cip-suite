@@ -91,6 +91,38 @@ const profiles = {
   },
 
   /**
+   * Allen-Bradley PowerFlex 525 AC drive (25B series, embedded EtherNet/IP).
+   * No Logix tags — controlled with implicit (Class 1) I/O via ForwardOpen + UDP.
+   * Models the real drive's strict Forward_Open acceptance: the produced/consumed
+   * assemblies must use Connection Point path segments and the transport must be
+   * Server + Class 1, or the drive rejects with CIP general status 0x01.
+   */
+  powerflex525: {
+    name: "25B-D PowerFlex 525",
+    vendor: 0x0001,         // Rockwell Automation
+    deviceType: 0x0096,     // AC Drive
+    productCode: 0x0009,
+    majorRevision: 5,
+    minorRevision: 1,
+    serial: 0x0f525001,
+    supportsForwardOpen: true,
+    supportsConnectedMessaging: false,
+    supportsTagBrowse: false,
+    supportsPCCC: false,
+    supportsReadControllerProps: false,
+    // Implicit I/O behaviour
+    supportsImplicitIO: true,
+    strictDriveForwardOpen: true,
+    ioConfig: {
+      configInstance: 6,
+      outputInstance: 2,   // O→T (Logic Command + Speed Reference), produced by scanner
+      inputInstance: 1,    // T→O (Logic Status + Speed Feedback), produced by drive
+      inputSize: 8,        // bytes the drive produces on T→O
+    },
+    tagSet: "powerflex525",
+  },
+
+  /**
    * Allen-Bradley PLC-5/40E
    * Classic PCCC-only controller. No CIP tag read/write.
    */

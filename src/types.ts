@@ -321,6 +321,13 @@ export interface CipIOScannerConfig {
   outputSize: string;
   udpPort: string;           // local UDP port for I/O (default 2222)
   runIdleHeader?: boolean;   // prepend 32-bit Run/Idle header on O→T (ODVA default)
+  electronicKeying?: boolean; // include an Electronic Key segment in the connection path
+  keyVendorId?: string;      // identity used when electronicKeying is on
+  keyDeviceType?: string;
+  keyProductCode?: string;
+  keyMajorRev?: string;
+  keyMinorRev?: string;
+  keyCompatibility?: boolean; // compatibility bit (accept compatible revisions)
 }
 
 // ── Utility types ──
