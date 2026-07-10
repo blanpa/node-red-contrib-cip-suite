@@ -29,10 +29,11 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
 
-      # npm >= 11.5.1 is required for OIDC trusted publishing. npm@latest (>=12)
-      # requires Node >= 22.22.2, so the runner Node version must stay in step.
+      # OIDC trusted publishing needs npm >= 11.5.1. Pin to the 11.x line:
+      # npm@latest (12.0.0) ships a broken --provenance path (missing 'sigstore'
+      # module) and requires Node >= 22.22.2. 11.x has working provenance.
       - name: Upgrade npm (trusted publishing needs npm >= 11.5.1)
-        run: npm install -g npm@latest
+        run: npm install -g npm@^11.5.1
 
       - name: Install dependencies
         run: npm ci
