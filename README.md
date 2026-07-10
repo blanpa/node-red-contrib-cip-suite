@@ -70,8 +70,18 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | Bit access | `MyDint.5` | Read/write bit 5 of a DINT |
 | Array element | `MyArray[3]` | Single array element |
 | Array range | `MyArray[0..9]` | Read elements 0-9 via fragmented read |
+| Nested array range | `MyStruct.Member[0..101]` | Read a range of a UDT member array |
+| UDT member | `MyUDT.MemberName` | Read/write a single structure member |
+| Whole UDT/STRUCT | `MyUDT` | Full structure as an object (needs tag list) |
 | Program-scoped | `Program:MainProgram.MyTag` | Tag inside a program |
 | Batch | `msg.tags = ["Tag1","Tag2"]` | Multi-tag read via TagGroup |
+
+On **cip-read**, the **Data Type** field controls decoding: `Auto-detect` returns
+scalars natively and expands whole arrays and UDT/STRUCT tags when the endpoint's
+tag list is available; `ARRAY` forces a full array read (size from the tag list, or
+probed, or via `msg.arraySize`); `STRUCT` forces UDT decoding. Auto-detect of full
+arrays and structures requires the tag list, which ControlLogix/CompactLogix provide
+on connect.
 
 ### PCCC (SLC/MLX/PLC-5)
 

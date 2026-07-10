@@ -13,7 +13,15 @@
  */
 
 import { CIPDataType, MultiTagResult } from "./types";
-import { parseTagName, getBit, STATUS, withTiming, cipTypeName } from "./utils";
+import {
+  parseTagName,
+  parseProgramScope,
+  resolveMemberInfo,
+  getBit,
+  STATUS,
+  withTiming,
+  cipTypeName,
+} from "./utils";
 
 module.exports = function (RED: any) {
   function CipReadNode(this: any, config: any) {
@@ -32,91 +40,158 @@ module.exports = function (RED: any) {
       return;
     }
 
+    function isStructureTag(tag: any): boolean {
+      return tag != null && tag._template != null;
+    }
+
+    function isStructType(type: unknown): boolean {
+      if (type === CIPDataType.STRUCT || type === "STRUCT") return true;
+      if (typeof type === "object" && type !== null && (type as any).code === CIPDataType.STRUCT) {
+        return true;
+      }
+      return false;
+    }
+
+    function createTag(controller: any, tagName: string, program: string | null, readSize = 1): any {
+      const { Tag } = require("st-ethernet-ip");
+      if (typeof controller.newTag === "function" && controller.state?.tagList) {
+        return controller.newTag(tagName, program, false, 0, readSize);
+      }
+      return new Tag(tagName, program, null, 0, 0, readSize);
+    }
+
+    function formatResultType(type: unknown): string {
+      if (typeof type === "string") return type;
+      if (typeof type === "number") return cipTypeName(type);
+      return String(type ?? "");
+    }
+
     /**
      * Read a single tag with support for bit access, array elements, array ranges, and UDTs.
      */
     async function readSingleTag(
-      tagName: string
+      tagName: string,
+      options: { dataType?: string; arraySize?: number } = {}
     ): Promise<{ value: any; type: string; bitIndex?: number; arrayIndex?: number }> {
       const parsed = parseTagName(tagName);
       const controller = node.endpoint.getController();
       if (!controller) throw new Error("Controller not available");
 
-      const { Tag, TagGroup } = require("st-ethernet-ip");
-      let Structure: any;
-      try {
-        Structure = require("st-ethernet-ip").Structure;
-      } catch {
-        // Structure class may not be available in all versions
-      }
+      const effectiveDataType = options.dataType ?? node.dataType;
+      const scope = parseProgramScope(parsed.baseName);
+      const tagList = controller.state?.tagList;
+      const memberInfo = resolveMemberInfo(scope.name, tagList, scope.program);
 
-      // Array range read: "MyArray[0..9]"
+      // Array range read: "MyArray[0..9]" or "Struct.Member[0..101]"
       if (parsed.isRange && parsed.arrayStart !== null && parsed.arrayEnd !== null) {
         const count = parsed.arrayEnd - parsed.arrayStart + 1;
-        const tag = new Tag(parsed.baseName, null, count);
-        if (parsed.arrayStart > 0) {
-          // Use fragmented read starting at offset
-          tag.value = null;
-        }
-        // Read the tag (st-ethernet-ip handles fragmented read for count > 1)
-        const tagWithIndex = new Tag(`${parsed.baseName}[${parsed.arrayStart}]`, null, count);
-        await controller.readTag(tagWithIndex);
+        const indexedName = `${parsed.baseName}[${parsed.arrayStart}]`;
+        const tag = createTag(controller, indexedName, scope.program, count);
+        await controller.readTag(tag);
         return {
-          value: tagWithIndex.value,
-          type: tagWithIndex.type,
+          value: tag.value,
+          type: formatResultType(tag.type),
         };
       }
 
       // Array element read: "MyArray[3]"
       if (parsed.arrayIndex !== null) {
-        const tag = new Tag(`${parsed.baseName}[${parsed.arrayIndex}]`);
+        const indexedName = `${parsed.baseName}[${parsed.arrayIndex}]`;
+        const tag = createTag(controller, indexedName, scope.program);
         await controller.readTag(tag);
         return {
           value: tag.value,
-          type: tag.type,
+          type: formatResultType(tag.type),
           arrayIndex: parsed.arrayIndex,
         };
       }
 
       // Bit-level access: "MyDint.5"
       if (parsed.bitIndex !== null) {
-        const tag = new Tag(parsed.baseName);
+        const tag = createTag(controller, parsed.baseName, scope.program);
         await controller.readTag(tag);
         const bitValue = getBit(tag.value, parsed.bitIndex);
         return {
           value: bitValue,
-          type: tag.type,
+          type: formatResultType(tag.type),
           bitIndex: parsed.bitIndex,
         };
       }
 
-      // Standard tag read
-      const tag = new Tag(parsed.baseName);
-      await controller.readTag(tag);
-
-      // Check for UDT/Structure type
-      const typeCode =
-        typeof tag.type === "object" && tag.type !== null ? tag.type.code : tag.type;
+      // Explicit STRUCT read (or auto when tag list marks the path as a
+      // non-array UDT; arrays of structs fall through to the array branch)
       if (
-        typeCode === CIPDataType.STRUCT &&
-        Structure &&
-        typeof Structure === "function"
+        effectiveDataType === "STRUCT" ||
+        (effectiveDataType === "auto" && memberInfo.isStruct && !memberInfo.isArray)
       ) {
-        try {
-          const struct = new Structure(parsed.baseName);
-          await controller.readTag(struct);
+        const tag = createTag(controller, parsed.baseName, scope.program);
+        await controller.readTag(tag);
+        if (isStructureTag(tag)) {
           return {
-            value: struct.value,
+            value: tag.value,
             type: "STRUCT",
           };
-        } catch (structErr: any) {
-          node.warn(`Structure read for "${parsed.baseName}" failed, using raw value: ${structErr.message}`);
+        }
+        if (effectiveDataType === "STRUCT") {
+          throw new Error(
+            `Tag "${parsed.baseName}" is not a UDT/STRUCT (tag list template missing?)`
+          );
+        }
+      }
+
+      // Full array read when ARRAY is selected, a size is provided, or
+      // auto-detect resolved the path to an array via the tag list
+      if (
+        effectiveDataType === "ARRAY" ||
+        options.arraySize != null ||
+        (effectiveDataType === "auto" && memberInfo.isArray)
+      ) {
+        const tag = createTag(controller, parsed.baseName, scope.program, 1);
+        let size = options.arraySize ?? memberInfo.arraySize ?? null;
+
+        if (size != null && size > 1) {
+          tag.read_size = size;
+          await controller.readTag(tag);
+        } else if (typeof controller.getTagArraySize === "function") {
+          size = await controller.getTagArraySize(tag);
+          await controller.readTag(tag);
+        } else {
+          await controller.readTag(tag);
+        }
+
+        return {
+          value: tag.value,
+          type: formatResultType(tag.type),
+        };
+      }
+
+      // Standard scalar read
+      const tag = createTag(controller, parsed.baseName, scope.program);
+      await controller.readTag(tag);
+
+      // Auto-detect STRUCT from response type or raw buffer payload
+      if (
+        effectiveDataType === "auto" &&
+        (isStructType(tag.type) || tag.state?.tag?.type === CIPDataType.STRUCT)
+      ) {
+        const structTag = createTag(controller, parsed.baseName, scope.program);
+        await controller.readTag(structTag);
+        if (isStructureTag(structTag) && !Buffer.isBuffer(structTag.value)) {
+          return {
+            value: structTag.value,
+            type: "STRUCT",
+          };
+        }
+        if (Buffer.isBuffer(tag.value)) {
+          node.warn(
+            `Structure read for "${parsed.baseName}" returned raw buffer; tag list templates may be incomplete`
+          );
         }
       }
 
       return {
         value: tag.value,
-        type: tag.type,
+        type: formatResultType(tag.type),
       };
     }
 
@@ -135,28 +210,37 @@ module.exports = function (RED: any) {
 
       for (const tagName of tags) {
         const parsed = parseTagName(tagName);
-        // For batch, only support simple tags and array elements
-        // Bit access and ranges are handled individually
-        if (parsed.bitIndex !== null || parsed.isRange) {
-          // Handle individually after group read
+        const scope = parseProgramScope(parsed.baseName);
+        const memberInfo = resolveMemberInfo(
+          scope.name,
+          controller.state?.tagList,
+          scope.program
+        );
+        const needsSpecialRead =
+          parsed.bitIndex !== null ||
+          parsed.isRange ||
+          node.dataType === "ARRAY" ||
+          node.dataType === "STRUCT" ||
+          memberInfo.isStruct ||
+          memberInfo.isArray;
+
+        if (needsSpecialRead) {
           tagObjects.push({ name: tagName, tag: null, individual: true });
         } else {
           const fullName =
             parsed.arrayIndex !== null
               ? `${parsed.baseName}[${parsed.arrayIndex}]`
               : parsed.baseName;
-          const tag = new Tag(fullName);
+          const tag = createTag(controller, fullName, scope.program);
           group.add(tag);
           tagObjects.push({ name: tagName, tag, individual: false });
         }
       }
 
-      // Read the group
       if (group.size > 0) {
         await controller.readTagGroup(group);
       }
 
-      // Build results
       const results: MultiTagResult[] = [];
       for (const item of tagObjects) {
         if (item.individual) {
@@ -165,7 +249,7 @@ module.exports = function (RED: any) {
             results.push({
               tagName: item.name,
               value: r.value,
-              type: typeof r.type === "string" ? r.type : cipTypeName(r.type),
+              type: r.type,
             });
           } catch (err: any) {
             results.push({
@@ -179,7 +263,7 @@ module.exports = function (RED: any) {
           results.push({
             tagName: item.name,
             value: item.tag.value,
-            type: item.tag.type,
+            type: formatResultType(item.tag.type),
           });
         }
       }
@@ -190,11 +274,10 @@ module.exports = function (RED: any) {
      * Read the configured tag and send the result.
      */
     async function doRead(triggerMsg?: any): Promise<void> {
-      if (node._reading) return; // backpressure: skip if previous read still in-flight
+      if (node._reading) return;
 
       node._reading = true;
       try {
-        // Batch mode: msg.tags is an array of tag names
         if (triggerMsg && Array.isArray(triggerMsg.tags)) {
           const { result: batchResult, elapsed } = await withTiming(() =>
             readBatch(triggerMsg.tags)
@@ -214,14 +297,21 @@ module.exports = function (RED: any) {
           return;
         }
 
-        // Single tag mode
         const tag = (triggerMsg && triggerMsg.tagName) || node.tagName;
         if (!tag) {
           node.warn("No tag name specified");
           return;
         }
 
-        const { result, elapsed } = await withTiming(() => readSingleTag(tag));
+        const readOptions = {
+          dataType: triggerMsg?.dataType,
+          arraySize:
+            triggerMsg?.arraySize != null
+              ? parseInt(String(triggerMsg.arraySize), 10)
+              : undefined,
+        };
+
+        const { result, elapsed } = await withTiming(() => readSingleTag(tag, readOptions));
         const msg: any = {
           payload: result.value,
           tagName: tag,
@@ -244,7 +334,11 @@ module.exports = function (RED: any) {
             ? result.value
               ? "true"
               : "false"
-            : String(result.value);
+            : Array.isArray(result.value)
+              ? `array[${result.value.length}]`
+              : typeof result.value === "object" && result.value !== null
+                ? "object"
+                : String(result.value);
         node.status({
           fill: "green",
           shape: "dot",
@@ -253,10 +347,7 @@ module.exports = function (RED: any) {
         node.send(msg);
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: err.message });
-        node.error(
-          `Read failed: ${err.message}`,
-          triggerMsg || {}
-        );
+        node.error(`Read failed: ${err.message}`, triggerMsg || {});
       } finally {
         node._reading = false;
       }
@@ -276,7 +367,6 @@ module.exports = function (RED: any) {
       }
     }
 
-    // Connection lifecycle
     node.on("cip:connected", function () {
       node.status(STATUS.connected());
       startPolling();
@@ -297,7 +387,6 @@ module.exports = function (RED: any) {
       stopPolling();
     });
 
-    // Trigger-based: read on incoming message
     node.on("input", function (msg: any) {
       if (!node.endpoint.connected) {
         node.status({ fill: "red", shape: "ring", text: "not connected" });

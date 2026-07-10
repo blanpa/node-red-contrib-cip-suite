@@ -60,6 +60,82 @@ export function parseTagName(tagName: string): ParsedTagName {
   return result;
 }
 
+export interface ProgramScope {
+  program: string | null;
+  name: string;
+}
+
+/**
+ * Split a program-scoped tag into program name and tag path.
+ * "Program:MainProgram.MyTag" → { program: "MainProgram", name: "MyTag" }
+ */
+export function parseProgramScope(tagName: string): ProgramScope {
+  const match = tagName.match(/^Program:([^.\[]+)[.](.+)$/);
+  if (match) {
+    return { program: match[1], name: match[2] };
+  }
+  return { program: null, name: tagName };
+}
+
+export interface MemberInfo {
+  arraySize: number | null;
+  isStruct: boolean;
+  isArray: boolean;
+}
+
+/**
+ * Resolve UDT member metadata (array length, nested struct) from the PLC tag list.
+ * `isArray` is true when the resolved path is an array; `arraySize` holds the
+ * element count when known, or null when it must be probed via getTagArraySize()
+ * (controller-scoped arrays don't carry their length in the tag list).
+ */
+export function resolveMemberInfo(
+  tagName: string,
+  tagList: { tags?: any[]; templates?: Record<number, any> } | null | undefined,
+  program: string | null = null
+): MemberInfo {
+  const empty: MemberInfo = { arraySize: null, isStruct: false, isArray: false };
+  if (!tagList?.tags?.length || !tagList.templates) return empty;
+
+  const segments = tagName.split(".").map((segment) => segment.replace(/\[\d+\]/g, ""));
+  const rootName = segments[0];
+  const tag = tagList.tags.find(
+    (entry) =>
+      entry.name.toLowerCase().replace(/\[.*/, "") === rootName.toLowerCase() &&
+      String(entry.program ?? "").toLowerCase() === String(program ?? "").toLowerCase()
+  );
+  if (!tag) return empty;
+
+  if (segments.length === 1) {
+    const isArray = tag.type.arrayDims > 0;
+    return {
+      arraySize: isArray ? null : 1,
+      isStruct: !!tag.type.structure,
+      isArray,
+    };
+  }
+
+  let template = tagList.templates[tag.type.code];
+  for (let i = 1; i < segments.length; i++) {
+    const member = template?._members?.find((entry: any) => entry.name === segments[i]);
+    if (!member) return empty;
+
+    if (i === segments.length - 1) {
+      const isArray = member.type.arrayDims > 0;
+      return {
+        arraySize: isArray ? member.info : 1,
+        isStruct: !!member.type.structure,
+        isArray,
+      };
+    }
+
+    template = tagList.templates[member.type.code];
+    if (!template) return empty;
+  }
+
+  return empty;
+}
+
 /**
  * Extract a bit from an integer value.
  */

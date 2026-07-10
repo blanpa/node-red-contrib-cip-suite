@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.0.5 — 2026-07-10
+
+### Fixed
+- **cip-read** — Arrays and UDT/STRUCT tags no longer return only their first
+  element. **Auto-detect** now consults the PLC tag list to recognise a tag (or a
+  nested UDT member) as an array and reads the full array, and to recognise a
+  structure and decode it into an object — previously these fell through to a scalar
+  read that returned only element `[0]`. Explicit `ARRAY`/`STRUCT` selection and
+  `msg.arraySize` continue to force the respective read. (#4)
+
+### Added
+- **cip-read** — `STRUCT` option in the **Data Type** dropdown to force UDT decoding,
+  and `msg.arraySize` to override the array length for a read.
+- Program-scoped array and struct reads (`Program:MainProgram.MyStruct.Member`) and
+  nested-member array ranges (`MyStruct.Member[0..101]`).
+- Tag-list helpers `parseProgramScope()` and `resolveMemberInfo()` (array length and
+  nested-struct resolution) with unit tests.
+
 ## 0.0.4 — 2026-06-26
 
 ### Fixed

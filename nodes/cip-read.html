@@ -50,6 +50,7 @@
       <option value="DINT">DINT (32-bit)</option>
       <option value="REAL">REAL (float)</option>
       <option value="STRING">STRING</option>
+      <option value="STRUCT">STRUCT (UDT)</option>
       <option value="ARRAY">ARRAY</option>
     </select>
   </div>
@@ -79,13 +80,20 @@
   <h3>Details</h3>
   <p>Set a poll interval (in milliseconds) for periodic reads, or leave at 0 for trigger-only mode.
   Backpressure is applied: if a read is already in-flight, subsequent poll ticks are skipped.</p>
+  <p><b>Data Type</b> controls how the tag value is decoded:
+  <ul>
+    <li><b>Auto-detect</b> — scalars as native values; UDT/STRUCT tags are expanded to objects when the PLC tag list is available.</li>
+    <li><b>STRUCT</b> — force UDT/structure decoding (requires tag list from the endpoint connection).</li>
+    <li><b>ARRAY</b> — read the full array. Size is taken from the tag list when possible, otherwise probed from the PLC. Override with <code>msg.arraySize</code>.</li>
+  </ul>
+  </p>
   <p>Click the <i class="fa fa-search"></i> button next to the tag name field to browse available tags
   from the connected PLC. The endpoint must be deployed and connected first.</p>
   <h3>Tag Addressing</h3>
   <ul>
     <li><b>Bit-level access:</b> Use dot notation to read individual bits, e.g. <code>MyDint.5</code> reads bit 5 of a DINT tag.</li>
     <li><b>Array element:</b> Use bracket notation, e.g. <code>MyArray[3]</code> reads element 3.</li>
-    <li><b>Array range:</b> Use range notation, e.g. <code>MyArray[0..9]</code> reads elements 0 through 9.</li>
+    <li><b>Array range:</b> Use range notation, e.g. <code>MyArray[0..9]</code> or <code>MyStruct.Member[0..101]</code> reads elements 0 through N.</li>
     <li><b>UDT members:</b> Access members with dot notation, e.g. <code>MyUDT.MemberName</code>.</li>
     <li><b>Program-scoped:</b> Use <code>Program:MainProgram.TagName</code> syntax.</li>
   </ul>

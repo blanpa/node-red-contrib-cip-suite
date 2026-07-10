@@ -1,5 +1,7 @@
 import {
   parseTagName,
+  parseProgramScope,
+  resolveMemberInfo,
   getBit,
   setBit,
   buildBitMasks,
@@ -73,6 +75,99 @@ describe("parseTagName", () => {
     expect(r.arrayStart).toBe(5);
     expect(r.arrayEnd).toBe(15);
     expect(r.isRange).toBe(true);
+  });
+
+  it("parses nested array range: Struct.Member[0..101]", () => {
+    const r = parseTagName("FIS_Stn[0].Local.FBCACTUAL[0..101]");
+    expect(r.baseName).toBe("FIS_Stn[0].Local.FBCACTUAL");
+    expect(r.arrayStart).toBe(0);
+    expect(r.arrayEnd).toBe(101);
+    expect(r.isRange).toBe(true);
+  });
+});
+
+describe("parseProgramScope", () => {
+  it("returns null program for controller-scoped tags", () => {
+    expect(parseProgramScope("FIS_Stn[0].Local")).toEqual({
+      program: null,
+      name: "FIS_Stn[0].Local",
+    });
+  });
+
+  it("splits program-scoped tags", () => {
+    expect(parseProgramScope("Program:MainProgram.MyTag")).toEqual({
+      program: "MainProgram",
+      name: "MyTag",
+    });
+  });
+});
+
+describe("resolveMemberInfo", () => {
+  const tagList = {
+    tags: [
+      {
+        name: "FIS_Stn",
+        program: null,
+        type: { code: 0xabcd, structure: true, arrayDims: 1 },
+      },
+    ],
+    templates: {
+      0xabcd: {
+        _members: [
+          {
+            name: "Local",
+            type: { code: 0xef01, structure: true, arrayDims: 0 },
+          },
+        ],
+      },
+      0xef01: {
+        _members: [
+          {
+            name: "FBCACTUAL",
+            type: { code: 0xc4, structure: false, arrayDims: 1 },
+            info: 102,
+          },
+        ],
+      },
+    },
+  };
+
+  it("detects nested struct members", () => {
+    expect(resolveMemberInfo("FIS_Stn[0].Local", tagList)).toEqual({
+      arraySize: 1,
+      isStruct: true,
+      isArray: false,
+    });
+  });
+
+  it("detects nested array member length", () => {
+    expect(resolveMemberInfo("FIS_Stn[0].Local.FBCACTUAL", tagList)).toEqual({
+      arraySize: 102,
+      isStruct: false,
+      isArray: true,
+    });
+  });
+
+  it("flags a controller-scoped array root with unknown size", () => {
+    const list = {
+      tags: [
+        { name: "MyArray", program: null, type: { code: 0xc4, structure: false, arrayDims: 1 } },
+      ],
+      templates: {},
+    };
+    expect(resolveMemberInfo("MyArray", list)).toEqual({
+      arraySize: null,
+      isStruct: false,
+      isArray: true,
+    });
+  });
+
+  it("returns empty info when the tag list is unavailable", () => {
+    expect(resolveMemberInfo("Whatever", null)).toEqual({
+      arraySize: null,
+      isStruct: false,
+      isArray: false,
+    });
   });
 });
 
