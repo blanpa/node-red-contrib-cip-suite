@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.0.7 — 2026-08-27
+
+### Fixed
+
+- **cip-read** — **batch reads returned `null` for every tag.** `msg.tags` collects
+  tags into a `TagGroup`, but the guard before the group read tested `group.size`,
+  a property `TagGroup` does not have. `undefined > 0` is false, so the group was
+  never read and every tag in it came back with a `null` value. It counts its
+  members through `length`.
+- **cip-read** — **an array of UDTs returned only element `[0]`.** A `Structure`
+  needs `arrayDims > 0` to decode a multi-element response as one object per
+  element; the read built it with `arrayDims = 0`, so `FIS_Stn` (an array of a
+  UDT) decoded the whole response as a single element. (#4)
+- **cip-read** — **a UDT read came back as a raw `Buffer` when the tag path's
+  casing differed from the controller's.** st-ethernet-ip matches UDT member
+  names case-sensitively when deciding whether to build a `Structure` (decodes to
+  an object) or a plain `Tag` (hands back the struct bytes), so `fis_stn[0].local`
+  yielded `buffer[832]` where `FIS_Stn[0].Local` yielded an object. Tag paths are
+  now rewritten to the controller's own casing before any tag object is built,
+  which is how Logix itself treats them. (#4)
+- **cip-read** — **program-scoped reads always failed** with CIP status `0x05`.
+  The path was sent with its `Program:<name>.` prefix *and* the program passed
+  separately, so the program segment appeared twice in the request.
+- **cip-io-scanner** — **a refused Forward_Open now names the reason.** The error
+  reported only the general status, which for a refused I/O connection is almost
+  always `0x01` "connection failure"; the extended status word — the part that
+  says *which* parameter the target objected to — was dropped. Both are now
+  reported, with the extended code spelled out (`0x0103` transport class/trigger,
+  `0x012a`/`0x012b` invalid application path, `0x0106` ownership conflict, and the
+  rest of the Connection Manager set). (#3)
+
+### Changed
+
+- **cip-read** — **array lengths are resolved in one request and cached.**
+  Controller- and program-scoped array tags do not carry their length in the tag
+  list, and st-ethernet-ip's `getTagArraySize()` recovers it by reading the tag
+  with 1, 2, 3, … elements until the read is refused — one round trip per element,
+  repeated on *every* read, so a polled 500-element array meant ~500 requests per
+  poll. The length now comes from Symbol Object attribute 8 (array dimensions) in
+  a single request, falls back to a bisecting index probe (~2·log₂n requests) if a
+  controller does not answer that attribute, and is memoised until the connection
+  is re-established.
+
+### Added
+
+- **Simulator** — UDT support, so the tag shapes from #4 can be reproduced without
+  hardware: Template Object (class 0x6C) attributes and Read Template, a nested
+  UDT (`FIS_Stn : FIS_STATION[5]` → `Local` → `FBFACTUAL : REAL[102]` and friends),
+  structure and array reads that honour the requested element count, `0xFF`/`0x2105`
+  for over-long requests, fragmented reads over the packet limit, and Symbol Object
+  attribute 8.
+- **Simulator** — corrected Logix behaviours that previously hid node bugs: array
+  and structure flags in the tag list type word, `Program:<name>` program symbols
+  in controller scope (which is how a client discovers program scopes), dotted
+  multi-segment symbolic paths, and Read Tag Fragmented no longer being mistaken
+  for Unconnected Send (both are service `0x52`).
+- **Tests** — 34 more, including an end-to-end suite that drives the real
+  `cip-read` node against the simulator over the arrays, nested UDTs, ranges,
+  program scopes and batch reads from #4, and a `cip-io-scanner` case asserting a
+  refused Forward_Open surfaces its extended status.
+
 ## 0.0.6 — 2026-08-26
 
 ### Changed

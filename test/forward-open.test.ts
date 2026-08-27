@@ -4,6 +4,7 @@
  * cip-io-scanner framing and why the fixed framing is accepted.
  */
 const { validateDriveForwardOpen, parseForwardOpen, EXT } = require("../simulator/forward-open");
+import { connectionErrorText } from "../src/types";
 
 const IO = { configInstance: 6, outputInstance: 2, inputInstance: 1, inputSize: 8 };
 
@@ -70,5 +71,33 @@ describe("strict drive Forward_Open validation (PowerFlex 525)", () => {
     const keySeg = parsed.segments.find((s: any) => s.type === "key");
     expect(keySeg).toMatchObject({ vendorId: 1, deviceType: 0x96, productCode: 9, majorRev: 5, minorRev: 1, compatibility: true });
     expect(validateDriveForwardOpen(fo, IO).ok).toBe(true);
+  });
+});
+
+describe("connectionErrorText", () => {
+  it("names the extended status, which is what says why a target refused", () => {
+    expect(connectionErrorText(0x01, [EXT.TRANSPORT_NOT_SUPPORTED])).toBe(
+      "CIP status 0x01 (Connection failure), extended 0x0103 " +
+        "(Transport class and trigger combination not supported)"
+    );
+  });
+
+  it("names the two application-path rejections a drive uses", () => {
+    expect(connectionErrorText(0x01, [EXT.INVALID_OT_APP_PATH])).toContain(
+      "Invalid Originator→Target application path"
+    );
+    expect(connectionErrorText(0x01, [EXT.INVALID_TO_APP_PATH])).toContain(
+      "Invalid Target→Originator application path"
+    );
+  });
+
+  it("still reports an extended code it has no text for", () => {
+    expect(connectionErrorText(0x01, [0x0999])).toBe(
+      "CIP status 0x01 (Connection failure), extended 0x0999"
+    );
+  });
+
+  it("reports the general status alone when there is no extended status", () => {
+    expect(connectionErrorText(0x08)).toBe("CIP status 0x08 (Service not supported)");
   });
 });

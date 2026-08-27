@@ -38,6 +38,64 @@ afterAll(() => {
   if (sim && !sim.killed) sim.kill("SIGKILL");
 });
 
+/** Build a cip-io-scanner node against a fake RED, capturing status and errors. */
+function makeScanner(config: Record<string, any>) {
+  const RED: any = { nodes: { createNode() {}, registerType(_n: string, ctor: any) { RED._ctor = ctor; } } };
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require(NODE_MODULE)(RED);
+
+  const statuses: string[] = [];
+  const errors: string[] = [];
+  const inputs: any[] = [];
+  let closeHandler: ((done: () => void) => void) | null = null;
+  let onEvent: (() => void) | null = null;
+
+  const node: any = Object.create(RED._ctor.prototype);
+  node.status = (s: any) => { if (s && s.text) statuses.push(s.text); };
+  node.log = () => {};
+  node.warn = () => {};
+  node.error = (m: string) => { errors.push(m); if (onEvent) onEvent(); };
+  node.on = (ev: string, cb: any) => { if (ev === "close") closeHandler = cb; };
+  node.send = (msg: any) => { inputs.push(msg); if (onEvent) onEvent(); };
+
+  const nextEvent = new Promise<void>((resolve) => { onEvent = resolve; });
+  RED._ctor.call(node, config);
+
+  return {
+    statuses,
+    errors,
+    inputs,
+    nextEvent,
+    close: () => (closeHandler ? new Promise<void>((res) => closeHandler!(res)) : Promise.resolve()),
+  };
+}
+
+test("a refused ForwardOpen is reported with its extended status", async () => {
+  // Assemblies the PF525 does not own, so the drive refuses the connection.
+  const scanner = makeScanner({
+    targetAddress: "127.0.0.1", targetPort: String(TCP_PORT), rpi: "50",
+    inputAssembly: "70", outputAssembly: "20", configAssembly: "6",
+    inputSize: "8", outputSize: "4", udpPort: "2224", runIdleHeader: true,
+  });
+
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => rej(new Error("no error reported")), 8000);
+  });
+  try {
+    await Promise.race([scanner.nextEvent, deadline]);
+  } finally {
+    clearTimeout(timer!);
+  }
+  await scanner.close();
+
+  const message = scanner.errors.join(" | ");
+  expect(message).toContain("ForwardOpen refused by target");
+  // The general status alone is just "connection failure"; the extended status
+  // is what tells the user which parameter the drive objected to.
+  expect(message).toMatch(/extended 0x0[0-9a-f]{3}/);
+}, 20000);
+
 test("scanner establishes I/O and exchanges cyclic data with the PF525 sim", async () => {
   const RED: any = { nodes: { createNode() {}, registerType(_n: string, ctor: any) { RED._ctor = ctor; } } };
   // eslint-disable-next-line @typescript-eslint/no-var-requires

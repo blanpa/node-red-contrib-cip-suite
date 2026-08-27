@@ -175,6 +175,74 @@ export const CIP_STATUS: Record<number, string> = {
   0x29: "Member not settable",
 };
 
+/**
+ * Connection Manager extended status codes, returned alongside general status
+ * 0x01 when a Forward_Open is refused. The general status alone only says
+ * "connection failure"; this word is what actually says why, so it is the first
+ * thing to look at when a target rejects an I/O connection.
+ */
+export const CIP_CONNECTION_EXT_STATUS: Record<number, string> = {
+  0x0100: "Connection already in use",
+  0x0103: "Transport class and trigger combination not supported",
+  0x0106: "Ownership conflict — the connection point is already owned by another scanner",
+  0x0107: "Target connection not found",
+  0x0108: "Invalid network connection parameter",
+  0x0109: "Invalid connection size",
+  0x0110: "Target application not configured for this connection",
+  0x0111: "RPI not supported",
+  0x0113: "Out of connections",
+  0x0114: "Vendor ID or product code in the electronic key does not match the device",
+  0x0115: "Device type in the electronic key does not match the device",
+  0x0116: "Revision in the electronic key does not match the device",
+  0x0117: "Invalid produced or consumed application path",
+  0x0118: "Invalid or inconsistent configuration application path",
+  0x0119: "Non-listen-only connection not opened",
+  0x011a: "Target object out of connections",
+  0x0203: "Connection timed out",
+  0x0204: "Unconnected request timed out",
+  0x0205: "Parameter error in unconnected request service",
+  0x0206: "Message too large for unconnected message service",
+  0x0311: "Invalid port ID in the connection path",
+  0x0312: "Invalid link address in the connection path",
+  0x0315: "Invalid segment type in the connection path",
+  0x0316: "Forward_Close connection path mismatch",
+  0x0317: "Scheduling not specified",
+  0x0318: "Invalid link address to self",
+  0x0319: "Secondary resources unavailable",
+  0x031a: "Rack connection already established",
+  0x031c: "Miscellaneous",
+  0x031e: "No more consumer resources available",
+  0x031f: "No connection resources exist for the target path",
+  0x0127: "Invalid Originator→Target connection size",
+  0x0128: "Invalid Target→Originator connection size",
+  0x0129: "Invalid configuration application path",
+  0x012a: "Invalid Originator→Target application path",
+  0x012b: "Invalid Target→Originator application path",
+  0x012f: "Invalid configuration size",
+  0x0130: "Invalid Originator→Target size",
+  0x0131: "Invalid Target→Originator size",
+};
+
+/**
+ * Human-readable text for a Forward_Open rejection.
+ * @param general - CIP general status byte
+ * @param extended - extended status words, if the reply carried any
+ */
+export function connectionErrorText(general: number, extended: number[] = []): string {
+  const parts = [
+    `CIP status 0x${general.toString(16).padStart(2, "0")} (${
+      CIP_STATUS[general] || "unknown"
+    })`,
+  ];
+  for (const word of extended) {
+    const text = CIP_CONNECTION_EXT_STATUS[word];
+    parts.push(
+      `extended 0x${word.toString(16).padStart(4, "0")}${text ? ` (${text})` : ""}`
+    );
+  }
+  return parts.join(", ");
+}
+
 // ── Endpoint config interface ──
 
 export interface CipEndpointConfig {

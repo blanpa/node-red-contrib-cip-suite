@@ -4,6 +4,8 @@
  * @module tags
  */
 
+const { FIS_STATION, FIS_STN_COUNT, buildFisStnData } = require("./udt");
+
 // CIP data type codes (matching st-ethernet-ip expectations)
 const CIP_TYPES = {
   BOOL: 0xc1,
@@ -31,6 +33,24 @@ function programTag(name, type, typeName, value, program) {
   return { name, type, typeName, value, dims: 0, program };
 }
 
+/**
+ * A UDT tag. `data` holds the raw structure bytes that reads slice from;
+ * `arraySize` is the element count when the tag is an array of the UDT.
+ */
+function structTag(name, template, arraySize, data) {
+  return {
+    name,
+    type: template.id,
+    typeName: template.name,
+    structure: true,
+    template,
+    dims: arraySize > 1 ? 1 : 0,
+    arraySize,
+    data,
+    value: null,
+  };
+}
+
 // ─── Tag sets per profile ────────────────────────────────────────────
 
 /**
@@ -54,12 +74,20 @@ function createControlLogixTags() {
     programTag("Program:MainProgram.MyTag", CIP_TYPES.DINT, "DINT", 100, "MainProgram"));
   tags.set("Program:MainProgram.Speed",
     programTag("Program:MainProgram.Speed", CIP_TYPES.REAL, "REAL", 60.0, "MainProgram"));
+  tags.set("Program:MainProgram.Recipe", {
+    ...arrayTag("Program:MainProgram.Recipe", CIP_TYPES.INT, "INT", [11, 22, 33, 44, 55, 66, 77, 88]),
+    program: "MainProgram",
+  });
 
   // Array tags
   tags.set("MyIntArray",
     arrayTag("MyIntArray", CIP_TYPES.INT, "INT", [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]));
   tags.set("MyRealArray",
     arrayTag("MyRealArray", CIP_TYPES.REAL, "REAL", [1.1, 2.2, 3.3, 4.4, 5.5]));
+
+  // UDT: array of stations, each holding a nested UDT of long arrays.
+  // Reproduces the tag shape from issue #4.
+  tags.set("FIS_Stn", structTag("FIS_Stn", FIS_STATION, FIS_STN_COUNT, buildFisStnData()));
 
   // Extended types
   tags.set("MyLint", tag("MyLint", CIP_TYPES.LINT, "LINT", 123456789));

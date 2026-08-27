@@ -173,4 +173,21 @@
   <b>off</b> first; only enable it if the drive refuses the unkeyed connection. Confirm the
   Logic Command bit map and the Speed Reference scaling against PowerFlex 520-series
   publication <i>520-UM001</i> for your drive&rsquo;s configuration.</p>
+
+  <h3>When the target refuses the connection</h3>
+  <p>The node reports both CIP status words, for example:</p>
+  <pre>ForwardOpen refused by target: CIP status 0x01 (Connection failure),
+extended 0x012a (Invalid Originator&rarr;Target application path)</pre>
+  <p>The general status of a refused I/O connection is nearly always <code>0x01</code>
+  &ldquo;connection failure&rdquo; and says nothing useful. The <b>extended</b> status is the
+  one that names the parameter the target objected to:</p>
+  <ul>
+    <li><code>0x0103</code> &mdash; transport class/trigger combination not supported.</li>
+    <li><code>0x0106</code> &mdash; ownership conflict: another scanner, often a PLC, already owns the connection point.</li>
+    <li><code>0x0110</code> &mdash; target not configured for this connection: wrong assembly instance, or the device needs configuring first.</li>
+    <li><code>0x0111</code> &mdash; RPI outside the range the device supports.</li>
+    <li><code>0x0114</code>&ndash;<code>0x0116</code> &mdash; electronic key mismatch (vendor, device type, revision).</li>
+    <li><code>0x0127</code> / <code>0x0128</code> &mdash; invalid O&rarr;T / T&rarr;O connection size. Check whether the Run/Idle header&rsquo;s 4 bytes belong in the count.</li>
+    <li><code>0x012a</code> / <code>0x012b</code> &mdash; invalid O&rarr;T / T&rarr;O application path: wrong Output or Input assembly instance.</li>
+  </ul>
 </script>

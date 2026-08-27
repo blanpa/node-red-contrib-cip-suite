@@ -2,6 +2,7 @@ import {
   parseTagName,
   parseProgramScope,
   resolveMemberInfo,
+  canonicalizeTagName,
   getBit,
   setBit,
   buildBitMasks,
@@ -168,6 +169,83 @@ describe("resolveMemberInfo", () => {
       isStruct: false,
       isArray: false,
     });
+  });
+
+  it("matches tag and member names case-insensitively, as Logix does", () => {
+    expect(resolveMemberInfo("fis_stn[0].local.fbcactual", tagList)).toEqual({
+      arraySize: 102,
+      isStruct: false,
+      isArray: true,
+    });
+  });
+
+  it("treats a subscripted member as a single element, not an array", () => {
+    expect(resolveMemberInfo("FIS_Stn[0].Local.FBCACTUAL[7]", tagList)).toEqual({
+      arraySize: 1,
+      isStruct: false,
+      isArray: false,
+    });
+  });
+
+  it("treats a subscripted array root as a single element", () => {
+    const list = {
+      tags: [
+        { name: "MyArray", program: null, type: { code: 0xc4, structure: false, arrayDims: 1 } },
+      ],
+      templates: {},
+    };
+    expect(resolveMemberInfo("MyArray[3]", list)).toEqual({
+      arraySize: 1,
+      isStruct: false,
+      isArray: false,
+    });
+  });
+});
+
+describe("canonicalizeTagName", () => {
+  const tagList = {
+    tags: [
+      { name: "FIS_Stn", program: null, type: { code: 0xabcd, structure: true, arrayDims: 1 } },
+      { name: "Speed", program: "MainProgram", type: { code: 0xca, structure: false, arrayDims: 0 } },
+    ],
+    templates: {
+      0xabcd: {
+        _members: [{ name: "Local", type: { code: 0xef01, structure: true, arrayDims: 0 } }],
+      },
+      0xef01: {
+        _members: [
+          { name: "FBCACTUAL", type: { code: 0xc4, structure: false, arrayDims: 1 }, info: 102 },
+        ],
+      },
+    },
+  };
+
+  it("restores the controller's casing for every path segment", () => {
+    expect(canonicalizeTagName("fis_stn[0].local.fbcactual", tagList)).toBe(
+      "FIS_Stn[0].Local.FBCACTUAL"
+    );
+  });
+
+  it("keeps subscripts, including ranges", () => {
+    expect(canonicalizeTagName("FIS_STN[2].LOCAL.FBCACTUAL[0..9]", tagList)).toBe(
+      "FIS_Stn[2].Local.FBCACTUAL[0..9]"
+    );
+  });
+
+  it("leaves an unresolvable trailing segment alone", () => {
+    expect(canonicalizeTagName("fis_stn[0].local.5", tagList)).toBe("FIS_Stn[0].Local.5");
+  });
+
+  it("resolves within the named program scope", () => {
+    expect(canonicalizeTagName("speed", tagList, "MainProgram")).toBe("Speed");
+  });
+
+  it("passes unknown tags through untouched", () => {
+    expect(canonicalizeTagName("SomeOtherTag.Member", tagList)).toBe("SomeOtherTag.Member");
+  });
+
+  it("passes everything through when there is no tag list", () => {
+    expect(canonicalizeTagName("Whatever", null)).toBe("Whatever");
   });
 });
 
