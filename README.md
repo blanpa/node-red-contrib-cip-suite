@@ -1,5 +1,8 @@
 # node-red-contrib-cip-suite
 
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/blanpa)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/blanpa)
+
 Comprehensive Node-RED nodes for Allen-Bradley and CIP-capable devices via EtherNet/IP. Covers the full spectrum from modern ControlLogix to legacy SLC500/PLC-5, plus advanced CIP objects for motion, energy, time sync, security, and more.
 
 ## Supported Hardware
