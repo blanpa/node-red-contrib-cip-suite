@@ -9,7 +9,7 @@
 
 import * as dgram from "dgram";
 import * as net from "net";
-import { CipIOScannerConfig } from "./types";
+import { CipIOScannerConfig, connectionErrorText } from "./types";
 import { STATUS } from "./utils";
 
 const ENCAP_HEADER_LEN = 24;
@@ -392,9 +392,11 @@ module.exports = function (RED: any) {
                 const len = pkt.readUInt16LE(off + 2);
                 off += 4;
                 if (typeId === 0x00B2) {
-                  // CIP reply
+                  // CIP reply: service(1) reserved(1) general status(1)
+                  //            extended status size in words(1) [extended...] data
                   const service = pkt.readUInt8(off) & 0x7F;
                   const status = pkt.readUInt8(off + 2);
+                  const extWords = pkt.readUInt8(off + 3);
                   if (service === 0x54 && status === 0) {
                     // Extract connection IDs from ForwardOpen response
                     const cipData = pkt.slice(off + 4);
@@ -407,9 +409,18 @@ module.exports = function (RED: any) {
                     resolve();
                     return;
                   } else {
+                    // The general status of a refused Forward_Open is almost
+                    // always 0x01 "connection failure"; the extended status is
+                    // the part that says which parameter the target objected to.
+                    const extended: number[] = [];
+                    for (let w = 0; w < extWords && off + 4 + w * 2 + 1 < pkt.length; w++) {
+                      extended.push(pkt.readUInt16LE(off + 4 + w * 2));
+                    }
                     clearTimeout(timeout);
                     node._tcpSocket!.removeListener("data", onData);
-                    reject(new Error(`ForwardOpen failed: CIP status 0x${status.toString(16)}`));
+                    reject(
+                      new Error(`ForwardOpen refused by target: ${connectionErrorText(status, extended)}`)
+                    );
                     return;
                   }
                 }

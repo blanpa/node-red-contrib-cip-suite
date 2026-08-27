@@ -83,31 +83,112 @@ export interface MemberInfo {
   isArray: boolean;
 }
 
+interface TagListLike {
+  tags?: any[];
+  templates?: Record<number, any>;
+}
+
+/** Strip a trailing array subscript ("FBACTUAL[3]" -> "FBACTUAL"). */
+function stripSubscript(segment: string): string {
+  return segment.replace(/\[[^\]]*\]/g, "");
+}
+
+/** Case-insensitive comparison, the way Logix treats tag and member names. */
+function sameName(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * Find the tag-list entry for the root of a tag path.
+ * Logix tag and member names are case-insensitive, so the lookup is too.
+ */
+export function findTagListEntry(
+  tagList: TagListLike | null | undefined,
+  rootName: string,
+  program: string | null = null
+): any | null {
+  if (!tagList?.tags?.length) return null;
+  const wanted = stripSubscript(rootName);
+  return (
+    tagList.tags.find(
+      (entry) =>
+        sameName(stripSubscript(String(entry.name)), wanted) &&
+        sameName(String(entry.program ?? ""), String(program ?? ""))
+    ) ?? null
+  );
+}
+
+/**
+ * Rewrite a tag path so every segment uses the exact casing the controller
+ * reports in its tag list and UDT templates.
+ *
+ * st-ethernet-ip matches UDT member names case-sensitively when it decides
+ * whether to build a `Structure` (which decodes into an object) or a plain
+ * `Tag` (which hands back the raw struct bytes). A path typed as
+ * `fis_stn[0].local` therefore reads back as a `Buffer` instead of an object,
+ * even though the same path works fine in Studio 5000. Canonicalising the path
+ * first makes the match succeed. Segments that cannot be resolved are passed
+ * through untouched.
+ */
+export function canonicalizeTagName(
+  tagName: string,
+  tagList: TagListLike | null | undefined,
+  program: string | null = null
+): string {
+  if (!tagList?.tags?.length) return tagName;
+
+  const segments = tagName.split(".");
+  const rootEntry = findTagListEntry(tagList, segments[0], program);
+  if (!rootEntry) return tagName;
+
+  const out: string[] = [
+    stripSubscript(String(rootEntry.name)) + subscriptOf(segments[0]),
+  ];
+
+  let template = tagList.templates?.[rootEntry.type?.code];
+  for (let i = 1; i < segments.length; i++) {
+    const bare = stripSubscript(segments[i]);
+    const member = template?._members?.find((entry: any) => sameName(String(entry.name), bare));
+    if (!member) {
+      // Unknown member (or a bit index such as ".5") — keep the rest verbatim.
+      return [...out, ...segments.slice(i)].join(".");
+    }
+    out.push(String(member.name) + subscriptOf(segments[i]));
+    template = tagList.templates?.[member.type?.code];
+  }
+  return out.join(".");
+}
+
+/** Return the subscript part of a segment ("Foo[3]" -> "[3]", "Foo" -> ""). */
+function subscriptOf(segment: string): string {
+  const at = segment.indexOf("[");
+  return at === -1 ? "" : segment.slice(at);
+}
+
 /**
  * Resolve UDT member metadata (array length, nested struct) from the PLC tag list.
  * `isArray` is true when the resolved path is an array; `arraySize` holds the
- * element count when known, or null when it must be probed via getTagArraySize()
- * (controller-scoped arrays don't carry their length in the tag list).
+ * element count when known, or null when it is not carried by the tag list and
+ * has to be resolved from the controller (see `resolveArrayLength`) — the
+ * Symbol Object list request only asks for name and type, so controller- and
+ * program-scoped array tags never carry their length here.
  */
 export function resolveMemberInfo(
   tagName: string,
-  tagList: { tags?: any[]; templates?: Record<number, any> } | null | undefined,
+  tagList: TagListLike | null | undefined,
   program: string | null = null
 ): MemberInfo {
   const empty: MemberInfo = { arraySize: null, isStruct: false, isArray: false };
   if (!tagList?.tags?.length || !tagList.templates) return empty;
 
-  const segments = tagName.split(".").map((segment) => segment.replace(/\[\d+\]/g, ""));
-  const rootName = segments[0];
-  const tag = tagList.tags.find(
-    (entry) =>
-      entry.name.toLowerCase().replace(/\[.*/, "") === rootName.toLowerCase() &&
-      String(entry.program ?? "").toLowerCase() === String(program ?? "").toLowerCase()
-  );
+  const rawSegments = tagName.split(".");
+  const segments = rawSegments.map(stripSubscript);
+  const tag = findTagListEntry(tagList, segments[0], program);
   if (!tag) return empty;
 
   if (segments.length === 1) {
-    const isArray = tag.type.arrayDims > 0;
+    // A subscripted root ("MyArray[3]") addresses a single element, not the array.
+    const isArray = tag.type.arrayDims > 0 && !subscriptOf(rawSegments[0]);
     return {
       arraySize: isArray ? null : 1,
       isStruct: !!tag.type.structure,
@@ -117,11 +198,11 @@ export function resolveMemberInfo(
 
   let template = tagList.templates[tag.type.code];
   for (let i = 1; i < segments.length; i++) {
-    const member = template?._members?.find((entry: any) => entry.name === segments[i]);
+    const member = template?._members?.find((entry: any) => sameName(String(entry.name), segments[i]));
     if (!member) return empty;
 
     if (i === segments.length - 1) {
-      const isArray = member.type.arrayDims > 0;
+      const isArray = member.type.arrayDims > 0 && !subscriptOf(rawSegments[i]);
       return {
         arraySize: isArray ? member.info : 1,
         isStruct: !!member.type.structure,

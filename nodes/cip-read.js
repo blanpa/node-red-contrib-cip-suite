@@ -15,6 +15,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const types_1 = require("./types");
 const utils_1 = require("./utils");
+const tag_array_1 = require("./tag-array");
 module.exports = function (RED) {
     function CipReadNode(config) {
         RED.nodes.createNode(this, config);
@@ -25,6 +26,9 @@ module.exports = function (RED) {
         node.pollInterval = parseInt(config.pollInterval, 10) || 0;
         node._pollTimer = null;
         node._reading = false;
+        // Array lengths are a property of the running controller program, so the
+        // memo is dropped whenever the connection is re-established.
+        node._arraySizes = new tag_array_1.ArraySizeCache();
         if (!node.endpoint) {
             node.status({ fill: "red", shape: "ring", text: "no endpoint" });
             return;
@@ -40,12 +44,20 @@ module.exports = function (RED) {
             }
             return false;
         }
-        function createTag(controller, tagName, program, readSize = 1) {
+        /**
+         * Build a tag object for a path. Goes through `Controller.newTag()` when a
+         * tag list is available so UDT paths come back as a `Structure` (which
+         * decodes into an object) rather than a plain `Tag` (which yields raw bytes).
+         *
+         * `arrayDims` must be > 0 when reading several elements of a UDT array, or
+         * `Structure` decodes the whole buffer as one element.
+         */
+        function createTag(controller, tagName, program, readSize = 1, arrayDims = 0) {
             const { Tag } = require("st-ethernet-ip");
             if (typeof controller.newTag === "function" && controller.state?.tagList) {
-                return controller.newTag(tagName, program, false, 0, readSize);
+                return controller.newTag(tagName, program, false, arrayDims, readSize);
             }
-            return new Tag(tagName, program, null, 0, 0, readSize);
+            return new Tag(tagName, program, null, 0, arrayDims, readSize);
         }
         function formatResultType(type) {
             if (typeof type === "string")
@@ -63,8 +75,18 @@ module.exports = function (RED) {
             if (!controller)
                 throw new Error("Controller not available");
             const effectiveDataType = options.dataType ?? node.dataType;
-            const scope = (0, utils_1.parseProgramScope)(parsed.baseName);
+            const rawScope = (0, utils_1.parseProgramScope)(parsed.baseName);
             const tagList = controller.state?.tagList;
+            // Match the controller's own casing before any tag object is built:
+            // st-ethernet-ip resolves UDT members case-sensitively, so "fis_stn[0].local"
+            // would otherwise read back as raw struct bytes instead of an object.
+            const scope = {
+                program: rawScope.program,
+                name: (0, utils_1.canonicalizeTagName)(rawScope.name, tagList, rawScope.program),
+            };
+            // The program name travels as a separate argument to the tag constructor,
+            // so the path itself must not keep its "Program:<name>." prefix.
+            parsed.baseName = scope.name;
             const memberInfo = (0, utils_1.resolveMemberInfo)(scope.name, tagList, scope.program);
             // Array range read: "MyArray[0..9]" or "Struct.Member[0..101]"
             if (parsed.isRange && parsed.arrayStart !== null && parsed.arrayEnd !== null) {
@@ -101,8 +123,9 @@ module.exports = function (RED) {
             }
             // Explicit STRUCT read (or auto when tag list marks the path as a
             // non-array UDT; arrays of structs fall through to the array branch)
-            if (effectiveDataType === "STRUCT" ||
-                (effectiveDataType === "auto" && memberInfo.isStruct && !memberInfo.isArray)) {
+            if (!memberInfo.isArray &&
+                (effectiveDataType === "STRUCT" ||
+                    (effectiveDataType === "auto" && memberInfo.isStruct))) {
                 const tag = createTag(controller, parsed.baseName, scope.program);
                 await controller.readTag(tag);
                 if (isStructureTag(tag)) {
@@ -115,24 +138,22 @@ module.exports = function (RED) {
                     throw new Error(`Tag "${parsed.baseName}" is not a UDT/STRUCT (tag list template missing?)`);
                 }
             }
-            // Full array read when ARRAY is selected, a size is provided, or
-            // auto-detect resolved the path to an array via the tag list
+            // Full array read when ARRAY is selected, a size is provided, or the tag
+            // list resolved the path to an array
             if (effectiveDataType === "ARRAY" ||
                 options.arraySize != null ||
-                (effectiveDataType === "auto" && memberInfo.isArray)) {
-                const tag = createTag(controller, parsed.baseName, scope.program, 1);
-                let size = options.arraySize ?? memberInfo.arraySize ?? null;
-                if (size != null && size > 1) {
-                    tag.read_size = size;
-                    await controller.readTag(tag);
+                ((effectiveDataType === "auto" || effectiveDataType === "STRUCT") && memberInfo.isArray)) {
+                // UDT members carry their length in the template; array tags do not, so
+                // those are resolved from the controller and memoised per connection.
+                let size = options.arraySize ?? (memberInfo.isArray ? memberInfo.arraySize : null) ?? null;
+                if (size == null || size < 1) {
+                    const resolved = await (0, tag_array_1.resolveArrayLength)(controller, parsed.baseName, scope.program, (indexedName) => createTag(controller, indexedName, scope.program), node._arraySizes);
+                    size = resolved?.size ?? 1;
                 }
-                else if (typeof controller.getTagArraySize === "function") {
-                    size = await controller.getTagArraySize(tag);
-                    await controller.readTag(tag);
-                }
-                else {
-                    await controller.readTag(tag);
-                }
+                // A UDT array needs arrayDims > 0 or Structure decodes the whole
+                // response as a single element.
+                const tag = createTag(controller, parsed.baseName, scope.program, size, size > 1 ? 1 : 0);
+                await controller.readTag(tag);
                 return {
                     value: tag.value,
                     type: formatResultType(tag.type),
@@ -173,8 +194,14 @@ module.exports = function (RED) {
             const tagObjects = [];
             for (const tagName of tags) {
                 const parsed = (0, utils_1.parseTagName)(tagName);
-                const scope = (0, utils_1.parseProgramScope)(parsed.baseName);
-                const memberInfo = (0, utils_1.resolveMemberInfo)(scope.name, controller.state?.tagList, scope.program);
+                const rawScope = (0, utils_1.parseProgramScope)(parsed.baseName);
+                const tagList = controller.state?.tagList;
+                const scope = {
+                    program: rawScope.program,
+                    name: (0, utils_1.canonicalizeTagName)(rawScope.name, tagList, rawScope.program),
+                };
+                parsed.baseName = scope.name;
+                const memberInfo = (0, utils_1.resolveMemberInfo)(scope.name, tagList, scope.program);
                 const needsSpecialRead = parsed.bitIndex !== null ||
                     parsed.isRange ||
                     node.dataType === "ARRAY" ||
@@ -193,7 +220,9 @@ module.exports = function (RED) {
                     tagObjects.push({ name: tagName, tag, individual: false });
                 }
             }
-            if (group.size > 0) {
+            // TagGroup counts its members through `length`; `size` is undefined, which
+            // used to skip the group read entirely and return null for every tag in it.
+            if (group.length > 0) {
                 await controller.readTagGroup(group);
             }
             const results = [];
@@ -316,6 +345,7 @@ module.exports = function (RED) {
         }
         node.on("cip:connected", function () {
             node.status(utils_1.STATUS.connected());
+            node._arraySizes.clear();
             startPolling();
         });
         node.on("cip:connecting", function () {

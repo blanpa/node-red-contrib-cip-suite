@@ -43,6 +43,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const dgram = __importStar(require("dgram"));
 const net = __importStar(require("net"));
+const types_1 = require("./types");
 const utils_1 = require("./utils");
 const ENCAP_HEADER_LEN = 24;
 const EIP_PORT = 44818;
@@ -409,9 +410,11 @@ module.exports = function (RED) {
                                 const len = pkt.readUInt16LE(off + 2);
                                 off += 4;
                                 if (typeId === 0x00B2) {
-                                    // CIP reply
+                                    // CIP reply: service(1) reserved(1) general status(1)
+                                    //            extended status size in words(1) [extended...] data
                                     const service = pkt.readUInt8(off) & 0x7F;
                                     const status = pkt.readUInt8(off + 2);
+                                    const extWords = pkt.readUInt8(off + 3);
                                     if (service === 0x54 && status === 0) {
                                         // Extract connection IDs from ForwardOpen response
                                         const cipData = pkt.slice(off + 4);
@@ -425,9 +428,16 @@ module.exports = function (RED) {
                                         return;
                                     }
                                     else {
+                                        // The general status of a refused Forward_Open is almost
+                                        // always 0x01 "connection failure"; the extended status is
+                                        // the part that says which parameter the target objected to.
+                                        const extended = [];
+                                        for (let w = 0; w < extWords && off + 4 + w * 2 + 1 < pkt.length; w++) {
+                                            extended.push(pkt.readUInt16LE(off + 4 + w * 2));
+                                        }
                                         clearTimeout(timeout);
                                         node._tcpSocket.removeListener("data", onData);
-                                        reject(new Error(`ForwardOpen failed: CIP status 0x${status.toString(16)}`));
+                                        reject(new Error(`ForwardOpen refused by target: ${(0, types_1.connectionErrorText)(status, extended)}`));
                                         return;
                                     }
                                 }

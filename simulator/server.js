@@ -15,11 +15,31 @@ const dgram = require("dgram");
 const { createDefaultTags, CIP_TYPES } = require("./tags");
 const { getProfile } = require("./profiles");
 const { validateDriveForwardOpen } = require("./forward-open");
+const {
+  ATOMIC_SIZE,
+  STRUCT_TYPE,
+  TEMPLATES,
+  encodeTemplateAttributes,
+  encodeTemplateDefinition,
+  typeWord,
+} = require("./udt");
+
+/**
+ * Largest CIP reply payload the simulator will send in one packet. Beyond this
+ * it answers "partial transfer" (0x06) so the client switches to a fragmented
+ * read, the same way a Logix controller does around its connection size.
+ */
+const MAX_REPLY_DATA = 500;
+
+/** CIP services that address a tag by symbolic path rather than by class. */
+const TAG_SERVICES = new Set([0x4c, 0x4d, 0x4e, 0x52, 0x53]);
 
 const PORT = parseInt(process.env.EIP_PORT, 10) || 44818;
 const IO_UDP_PORT = parseInt(process.env.IO_UDP_PORT, 10) || 2222;
 const profile = getProfile(process.env.PLC_TYPE);
 const tags = createDefaultTags(profile.tagSet);
+let symbolTagCache = null;
+let programSymbolCache = null;
 let nextSession = 1;
 
 // Active implicit (Class 1) I/O connection state, used by the drive profiles.
@@ -367,6 +387,62 @@ function handleGetAttributeSingle() {
 }
 
 /**
+ * Tags exposed through the Symbol Object, in a stable order, each carrying the
+ * instance id the controller would assign it. PCCC register files are simulator
+ * bookkeeping, not Logix symbols, so they stay out of the list.
+ * @returns {object[]}
+ */
+function symbolTags() {
+  if (!symbolTagCache) {
+    symbolTagCache = Array.from(tags.values()).filter((t) => typeof t.type === "number");
+    symbolTagCache.forEach((t, i) => { t.instanceId = i + 1; });
+  }
+  return symbolTagCache;
+}
+
+/**
+ * Controller-scope stand-ins for the programs on the controller. Logix lists
+ * each program as a symbol literally named "Program:<name>"; that is how a
+ * client discovers which program scopes it can then browse.
+ * @returns {object[]}
+ */
+function programSymbols() {
+  if (!programSymbolCache) {
+    const names = [...new Set(symbolTags().map((t) => t.program).filter(Boolean))];
+    programSymbolCache = names.map((name, i) => ({
+      name: `Program:${name}`,
+      type: 0x0068, // Logix program symbol
+      dims: 0,
+      instanceId: 0x10000 + i,
+    }));
+  }
+  return programSymbolCache;
+}
+
+/**
+ * The symbols visible in one scope: a program's own tags, or the
+ * controller-scope tags plus the program symbols.
+ * @param {string|null} program
+ * @returns {object[]}
+ */
+function symbolsInScope(program) {
+  if (program) return symbolTags().filter((t) => t.program === program);
+  return symbolTags().filter((t) => !t.program).concat(programSymbols());
+}
+
+/** Element count of a tag: array length, or 1 for a scalar. */
+function arrayLengthOf(tag) {
+  if (tag.arraySize) return tag.arraySize;
+  return Array.isArray(tag.value) ? tag.value.length : 1;
+}
+
+/** Byte size of one element of a tag. */
+function elementSizeOf(tag) {
+  if (tag.structure) return tag.template.structureSize;
+  return ATOMIC_SIZE[tag.type] || 4;
+}
+
+/**
  * Handle GET_INSTANCE_ATTRIBUTE_LIST (0x55) for tag browsing.
  * st-ethernet-ip expects: for each tag: instanceID(4) + nameLen(2) + name(N) + type(2)
  * @param {number} startInstance
@@ -374,80 +450,216 @@ function handleGetAttributeSingle() {
  * @returns {Buffer}
  */
 function handleGetInstanceAttributeList(startInstance, program) {
-  const tagArray = Array.from(tags.values());
   const entries = [];
-  let instanceCounter = 0;
 
-  for (let i = 0; i < tagArray.length; i++) {
-    const tag = tagArray[i];
+  for (const tag of symbolsInScope(program)) {
+    if (tag.instanceId < startInstance) continue;
 
-    // Filter by program scope
-    if (program) {
-      if (tag.program !== program) continue;
-    } else {
-      // Global scope: exclude program-scoped tags (they'll be fetched per-program)
-      // But include them so st-ethernet-ip discovers the program names
-    }
-
-    instanceCounter++;
-    if (instanceCounter < startInstance) continue;
-
-    // For program-scoped tags, st-ethernet-ip expects the short name (without "Program:X." prefix)
-    let displayName = tag.name;
-    if (program && displayName.startsWith(`Program:${program}.`)) {
-      displayName = displayName.substring(`Program:${program}.`.length);
-    }
+    // Within a program scope the controller reports the short name.
+    const prefix = `Program:${program}.`;
+    const displayName =
+      program && tag.name.startsWith(prefix) ? tag.name.slice(prefix.length) : tag.name;
 
     const nameBytes = Buffer.from(displayName, "ascii");
     const entry = Buffer.alloc(4 + 2 + nameBytes.length + 2);
     let off = 0;
-    entry.writeUInt32LE(instanceCounter, off); off += 4;
+    entry.writeUInt32LE(tag.instanceId, off); off += 4;
     entry.writeUInt16LE(nameBytes.length, off); off += 2;
     nameBytes.copy(entry, off); off += nameBytes.length;
-    entry.writeUInt16LE(tag.type, off);
+    // The type word carries the structure flag and the dimension count, which
+    // is how a client tells an array or UDT tag from a scalar.
+    entry.writeUInt16LE(typeWord(tag.type, !!tag.structure, tag.dims || 0), off);
     entries.push(entry);
   }
 
-  const allData = Buffer.concat(entries);
-  return cipResponse(0x55, 0, allData);
+  return cipResponse(0x55, 0, Buffer.concat(entries));
 }
 
 /**
- * Encode a tag value as CIP read response data.
- * Format: type(2) + value bytes (no count field in read response)
+ * Handle Get_Attribute_Single on the Symbol Object (class 0x6B).
+ * Attribute 8 is the extent of each array dimension — the only way a client can
+ * learn how many elements an array tag holds, since the tag list carries the
+ * dimension count but not the sizes.
+ * @param {number} instanceId
+ * @param {number} attributeId
+ * @param {string|null} program - program scope the symbol belongs to
+ * @returns {Buffer}
+ */
+function handleSymbolObject(instanceId, attributeId, program) {
+  const tag = symbolsInScope(program || null).find((t) => t.instanceId === instanceId);
+  if (!tag) return cipResponse(0x0e, 0x05); // path destination unknown
+
+  if (attributeId === 8) {
+    if (!tag.dims) return cipResponse(0x0e, 0x14); // attribute not supported on a scalar
+    const dims = Buffer.alloc(12);
+    dims.writeUInt32LE(arrayLengthOf(tag), 0);
+    console.log(`  SYMBOL ${tag.name} array dimensions = ${arrayLengthOf(tag)}`);
+    return cipResponse(0x0e, 0, dims);
+  }
+  if (attributeId === 7) {
+    const size = Buffer.alloc(2);
+    size.writeUInt16LE(elementSizeOf(tag), 0);
+    return cipResponse(0x0e, 0, size);
+  }
+  return cipResponse(0x0e, 0x14); // attribute not supported
+}
+
+/**
+ * Handle Template Object (class 0x6C) requests: the attribute list that
+ * describes a UDT, and the Read Template service that returns its members.
+ * @param {number} service
+ * @param {number} instanceId - template id
+ * @param {Buffer} data
+ * @returns {Buffer}
+ */
+function handleTemplateObject(service, instanceId, data) {
+  const template = TEMPLATES.get(instanceId);
+  if (!template) return cipResponse(service, 0x05); // path destination unknown
+
+  if (service === 0x03) {
+    console.log(`  TEMPLATE ${template.name} attributes`);
+    return cipResponse(0x03, 0, encodeTemplateAttributes(template));
+  }
+
+  if (service === 0x4c) {
+    const definition = encodeTemplateDefinition(template);
+    const offset = data.length >= 4 ? data.readUInt32LE(0) : 0;
+    const requested = data.length >= 6 ? data.readUInt16LE(4) : definition.length;
+    if (offset >= definition.length) return cipResponse(0x4c, 0, Buffer.alloc(0));
+
+    const end = Math.min(definition.length, offset + Math.min(requested, MAX_REPLY_DATA));
+    const chunk = definition.slice(offset, end);
+    const partial = end < definition.length;
+    console.log(
+      `  TEMPLATE ${template.name} read ${offset}..${end}/${definition.length}` +
+        (partial ? " (partial)" : "")
+    );
+    return cipResponse(0x4c, partial ? 0x06 : 0, chunk);
+  }
+
+  return cipResponse(service, 0x08); // service not supported
+}
+
+/**
+ * Raw little-endian bytes of a tag's value, so a read can slice any element
+ * range out of it. UDT tags already store their bytes; scalar and array tags
+ * keep JavaScript values, so those are encoded on demand.
  * @param {object} tag
  * @returns {Buffer}
  */
-function encodeTagValue(tag) {
-  let buf;
-  switch (tag.type) {
-    case CIP_TYPES.BOOL:
-    case CIP_TYPES.SINT:
-      buf = Buffer.alloc(2 + 1);
-      buf.writeUInt16LE(tag.type, 0);
-      buf.writeUInt8(tag.value ? 1 : 0, 2);
-      return buf;
-    case CIP_TYPES.INT:
-      buf = Buffer.alloc(2 + 2);
-      buf.writeUInt16LE(tag.type, 0);
-      buf.writeInt16LE(tag.value, 2);
-      return buf;
-    case CIP_TYPES.DINT:
-      buf = Buffer.alloc(2 + 4);
-      buf.writeUInt16LE(tag.type, 0);
-      buf.writeInt32LE(tag.value, 2);
-      return buf;
-    case CIP_TYPES.REAL:
-      buf = Buffer.alloc(2 + 4);
-      buf.writeUInt16LE(tag.type, 0);
-      buf.writeFloatLE(tag.value, 2);
-      return buf;
-    default:
-      buf = Buffer.alloc(2 + 4);
-      buf.writeUInt16LE(CIP_TYPES.DINT, 0);
-      buf.writeInt32LE(0, 2);
-      return buf;
+function tagDataBuffer(tag) {
+  if (tag.structure) return tag.data;
+
+  const elements = Array.isArray(tag.value) ? tag.value : [tag.value];
+  const size = elementSizeOf(tag);
+  const buf = Buffer.alloc(elements.length * size);
+  elements.forEach((value, i) => {
+    switch (tag.type) {
+      case CIP_TYPES.BOOL:
+        buf.writeUInt8(value ? 1 : 0, i);
+        break;
+      case CIP_TYPES.SINT:
+        buf.writeInt8(value | 0, i);
+        break;
+      case CIP_TYPES.INT:
+        buf.writeInt16LE(value | 0, i * 2);
+        break;
+      case CIP_TYPES.DINT:
+        buf.writeInt32LE(value | 0, i * 4);
+        break;
+      case CIP_TYPES.LINT:
+        buf.writeBigInt64LE(BigInt(Math.trunc(value)), i * 8);
+        break;
+      case CIP_TYPES.REAL:
+        buf.writeFloatLE(value, i * 4);
+        break;
+      default:
+        buf.writeInt32LE(0, i * 4);
+    }
+  });
+  return buf;
+}
+
+/**
+ * Resolve a symbolic tag path — root tag, array subscripts and UDT members —
+ * down to a byte range inside the tag's data.
+ *
+ * "FIS_Stn[0].Local.FBFACTUAL" resolves to the 102 REALs of station 0.
+ *
+ * @param {string} path
+ * @returns {{tag: object, byteOffset: number, elementSize: number,
+ *            elementCount: number, typeCode: number, structure: boolean,
+ *            structureHandle: number}|null} null when the path does not exist
+ */
+function resolveTagPath(path) {
+  const segments = path.split(".").map((segment) => {
+    const match = segment.match(/^([^[]+)(?:\[(\d+)\])?$/);
+    if (!match) return null;
+    return { name: match[1], index: match[2] === undefined ? null : parseInt(match[2], 10) };
+  });
+  if (segments.some((segment) => segment === null)) return null;
+
+  // A program-scoped path arrives as "Program:<name>" followed by the tag, and
+  // the simulator keys those tags by the two joined together.
+  let firstMember = 1;
+  let root = segments[0];
+  if (root.name.startsWith("Program:") && segments.length > 1) {
+    root = { name: `${root.name}.${segments[1].name}`, index: segments[1].index };
+    firstMember = 2;
   }
+
+  let tag = tags.get(root.name);
+  if (!tag) {
+    const key = Array.from(tags.keys()).find((k) => k.toLowerCase() === root.name.toLowerCase());
+    tag = key ? tags.get(key) : null;
+  }
+  if (!tag) return null;
+
+  let elementSize = elementSizeOf(tag);
+  let count = arrayLengthOf(tag);
+  let byteOffset = 0;
+  let typeCode = tag.type;
+  let structure = !!tag.structure;
+  let template = tag.template || null;
+
+  // A subscript picks a starting element; the elements after it are still
+  // readable, which is what makes "MyArray[10]" with a count of 10 a range read.
+  if (root.index !== null) {
+    if (root.index >= count) return null;
+    byteOffset += root.index * elementSize;
+    count -= root.index;
+  }
+
+  for (let i = firstMember; i < segments.length; i++) {
+    if (!template) return null;
+    const member = template.members.find(
+      (m) => m.name.toLowerCase() === segments[i].name.toLowerCase()
+    );
+    if (!member) return null;
+
+    byteOffset += member.offset;
+    elementSize = member.elementSize;
+    count = member.count;
+    typeCode = member.typeCode;
+    structure = member.structure;
+    template = member.template;
+
+    if (segments[i].index !== null) {
+      if (segments[i].index >= count) return null;
+      byteOffset += segments[i].index * elementSize;
+      count -= segments[i].index;
+    }
+  }
+
+  return {
+    tag,
+    byteOffset,
+    elementSize,
+    elementCount: count,
+    typeCode,
+    structure,
+    structureHandle: structure && template ? template.structureHandle : 0,
+  };
 }
 
 /**
@@ -514,13 +726,21 @@ function parseSymbolicPath(buf) {
     const seg = buf.readUInt8(offset);
     if (seg === 0x91) {
       const len = buf.readUInt8(offset + 1);
+      // Each ANSI symbolic segment is one path element; the dots between them
+      // are not on the wire, so they have to be put back.
+      if (tagName) tagName += ".";
       tagName += buf.toString("ascii", offset + 2, offset + 2 + len);
       offset += 2 + len;
       if (len % 2 !== 0) offset += 1; // pad
     } else if (seg === 0x28) {
-      const idx = buf.readUInt8(offset + 1);
-      tagName += `[${idx}]`;
+      tagName += `[${buf.readUInt8(offset + 1)}]`;
       offset += 2;
+    } else if (seg === 0x29) {
+      tagName += `[${buf.readUInt16LE(offset + 2)}]`;
+      offset += 4;
+    } else if (seg === 0x2a) {
+      tagName += `[${buf.readUInt32LE(offset + 2)}]`;
+      offset += 6;
     } else {
       break;
     }
@@ -530,18 +750,66 @@ function parseSymbolicPath(buf) {
 
 /**
  * Handle a Read Tag (0x4C) or Read Tag Fragmented (0x52) request.
+ *
+ * Honours the requested element count, so an array read returns the whole
+ * array rather than its first element, and answers over-long requests the way
+ * Logix does: general status 0xFF with extended status 0x2105, "number of
+ * elements extends beyond the end of the requested tag".
+ *
  * @param {number} service
  * @param {string} tagName
+ * @param {Buffer} data - request data: count(2), plus byte offset(4) when fragmented
  * @returns {Buffer}
  */
-function handleReadTag(service, tagName) {
-  const tag = tags.get(tagName);
-  if (!tag) {
+function handleReadTag(service, tagName, data) {
+  const resolved = resolveTagPath(tagName);
+  if (!resolved) {
     console.log(`  READ unknown: "${tagName}"`);
     return cipResponse(service, 0x05); // path destination unknown
   }
-  console.log(`  READ ${tagName} = ${tag.value}`);
-  return cipResponse(service, 0, encodeTagValue(tag));
+
+  const requested = data && data.length >= 2 ? data.readUInt16LE(0) : 1;
+  const byteOffset = service === 0x52 && data && data.length >= 6 ? data.readUInt32LE(2) : 0;
+
+  if (requested < 1 || requested > resolved.elementCount) {
+    console.log(
+      `  READ ${tagName} × ${requested} → beyond end of tag (has ${resolved.elementCount})`
+    );
+    return cipResponse(service, 0xff, undefined, 0x2105);
+  }
+
+  const header = resolved.structure
+    ? (() => {
+        const buf = Buffer.alloc(4);
+        buf.writeUInt16LE(STRUCT_TYPE, 0);
+        buf.writeUInt16LE(resolved.structureHandle, 2);
+        return buf;
+      })()
+    : (() => {
+        const buf = Buffer.alloc(2);
+        buf.writeUInt16LE(resolved.typeCode, 0);
+        return buf;
+      })();
+
+  const source = tagDataBuffer(resolved.tag);
+  const value = source.slice(
+    resolved.byteOffset,
+    resolved.byteOffset + requested * resolved.elementSize
+  );
+
+  if (byteOffset >= value.length && byteOffset > 0) {
+    return cipResponse(service, 0, header);
+  }
+
+  const room = MAX_REPLY_DATA - header.length;
+  const chunk = value.slice(byteOffset, byteOffset + room);
+  const partial = byteOffset + chunk.length < value.length;
+
+  console.log(
+    `  READ ${tagName} × ${requested} → ${chunk.length}/${value.length} bytes` +
+      (partial ? ` (partial from ${byteOffset})` : "")
+  );
+  return cipResponse(service, partial ? 0x06 : 0, Buffer.concat([header, chunk]));
 }
 
 /**
@@ -1142,8 +1410,10 @@ function handleCipRequest(cipMsg) {
     return handleMultipleServicePacket(data);
   }
 
-  // Unconnected Send (0x52) to Connection Manager — unwrap embedded message
-  if (service === 0x52) {
+  // Unconnected Send (0x52) to Connection Manager — unwrap embedded message.
+  // 0x52 is also Read Tag Fragmented; the two are told apart by the path, which
+  // is logical (Connection Manager) for one and symbolic (a tag) for the other.
+  if (service === 0x52 && !(path.length >= 2 && path.readUInt8(0) === 0x91)) {
     return handleUnconnectedSend(path, data);
   }
 
@@ -1166,18 +1436,19 @@ function handleCipRequest(cipMsg) {
   if (path.length >= 2) {
     const seg0 = path.readUInt8(0);
 
-    // Symbolic segment → tag operation (read/write)
-    if (seg0 === 0x91) {
+    // Symbolic segment → tag operation (read/write). A path can also *start*
+    // with a "Program:<name>" data segment and go on to a logical class segment,
+    // so only the tag services are routed here.
+    if (seg0 === 0x91 && TAG_SERVICES.has(service)) {
       const { tagName } = parseSymbolicPath(path);
-      if (service === 0x4c) return handleReadTag(0x4c, tagName);
       if (service === 0x4d || service === 0x53) return handleWriteTag(service, tagName, data);
-      // Read Tag Fragmented (0x52) in connected mode
-      return handleReadTag(service, tagName);
+      // 0x4C plain read, 0x52 fragmented read
+      return handleReadTag(service, tagName, data);
     }
 
-    // Logical segment (class-based path)
-    if (seg0 === 0x20) {
-      const { classId, instanceId } = parseClassPath(path);
+    // Logical segment (class-based path), optionally program-scoped
+    if (seg0 === 0x20 || seg0 === 0x91) {
+      const { classId, instanceId, program: pathProgram } = parseClassPath(path);
 
       // Time Sync Object (0x43)
       if (classId === 0x43) {
@@ -1234,9 +1505,17 @@ function handleCipRequest(cipMsg) {
         return cipResponse(service, 0);
       }
 
-      // Symbol Object (0x6B) — tag list (non-program path)
+      // Symbol Object (0x6B) — tag list, and per-symbol attributes
       if (classId === 0x6b) {
-        return handleGetInstanceAttributeList(instanceId, null);
+        if (service === 0x0e) {
+          return handleSymbolObject(instanceId, extractAttributeId(path), pathProgram);
+        }
+        return handleGetInstanceAttributeList(instanceId, pathProgram);
+      }
+
+      // Template Object (0x6C) — UDT definitions
+      if (classId === 0x6c) {
+        return handleTemplateObject(service, instanceId, data);
       }
 
       // PCCC Object (0x67) — Execute PCCC
