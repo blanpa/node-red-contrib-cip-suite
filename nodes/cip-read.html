@@ -64,12 +64,15 @@
   <p>Reads a tag value from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
   <h3>Inputs</h3>
   <p>An incoming message triggers a read. Set <code>msg.tagName</code> to override the configured tag.</p>
-  <p>For batch reads, set <code>msg.tags</code> to an array of tag name strings. All tags are read
-  in a single operation and results are returned as an object keyed by tag name.</p>
+  <p>For batch reads, set <code>msg.tags</code> to an array of tag name strings. Plain tags are read
+  together in one operation; arrays and UDTs are read individually, since they need their own
+  element count or structure decoding.</p>
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload <span class="property-type">*</span></dt>
-    <dd>The tag value read from the PLC. For batch reads, an object keyed by tag name.</dd>
+    <dd>The tag value read from the PLC. For batch reads, an array of
+    <code>{ tagName, value, type }</code> objects, one per requested tag, each carrying an
+    <code>error</code> string instead of a value if that tag could not be read.</dd>
     <dt>tagName <span class="property-type">string</span></dt>
     <dd>The name of the tag that was read.</dd>
     <dt>dataType <span class="property-type">string</span></dt>
@@ -82,11 +85,17 @@
   Backpressure is applied: if a read is already in-flight, subsequent poll ticks are skipped.</p>
   <p><b>Data Type</b> controls how the tag value is decoded:
   <ul>
-    <li><b>Auto-detect</b> — scalars as native values; UDT/STRUCT tags are expanded to objects when the PLC tag list is available.</li>
-    <li><b>STRUCT</b> — force UDT/structure decoding (requires tag list from the endpoint connection).</li>
-    <li><b>ARRAY</b> — read the full array. Size is taken from the tag list when possible, otherwise probed from the PLC. Override with <code>msg.arraySize</code>.</li>
+    <li><b>Auto-detect</b> — scalars as native values; arrays are read in full and UDT/STRUCT tags are expanded to objects, when the PLC tag list is available.</li>
+    <li><b>STRUCT</b> — force UDT/structure decoding (requires tag list from the endpoint connection). An array of UDTs yields one object per element.</li>
+    <li><b>ARRAY</b> — read the full array. Override the length with <code>msg.arraySize</code>.</li>
   </ul>
   </p>
+  <p><b>Array lengths</b> come from the UDT template for a member array such as
+  <code>MyStruct.Member</code>, and otherwise from the controller's Symbol Object (array
+  dimensions) in a single request — the tag list does not carry the length of a
+  controller- or program-scoped array tag. If a controller does not answer that
+  attribute, the length is found by a bisecting index probe. The result is cached until
+  the connection is re-established, so polling an array costs one request per poll.</p>
   <p>Click the <i class="fa fa-search"></i> button next to the tag name field to browse available tags
   from the connected PLC. The endpoint must be deployed and connected first.</p>
   <h3>Tag Addressing</h3>
@@ -95,11 +104,16 @@
     <li><b>Array element:</b> Use bracket notation, e.g. <code>MyArray[3]</code> reads element 3.</li>
     <li><b>Array range:</b> Use range notation, e.g. <code>MyArray[0..9]</code> or <code>MyStruct.Member[0..101]</code> reads elements 0 through N.</li>
     <li><b>UDT members:</b> Access members with dot notation, e.g. <code>MyUDT.MemberName</code>.</li>
+    <li><b>Whole array:</b> Give the tag on its own, e.g. <code>MyArray</code> or <code>MyStruct.Member</code>, to read every element. An array of UDTs yields one object per element.</li>
     <li><b>Program-scoped:</b> Use <code>Program:MainProgram.TagName</code> syntax.</li>
   </ul>
+  <p>Tag paths are matched case-insensitively, the way Logix treats them:
+  <code>mystruct.member</code> and <code>MyStruct.Member</code> address the same tag and
+  both decode into an object.</p>
   <h3>Batch Mode</h3>
-  <p>Send <code>msg.tags</code> as an array of tag names to read multiple tags in one operation.
-  The output <code>msg.payload</code> will be an object with tag names as keys and their values.</p>
+  <p>Send <code>msg.tags</code> as an array of tag names to read several tags at once.
+  <code>msg.payload</code> is an array of <code>{ tagName, value, type }</code> objects in the
+  order requested.</p>
 </script>
 
 <script type="text/javascript">

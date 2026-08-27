@@ -75,15 +75,30 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | Nested array range | `MyStruct.Member[0..101]` | Read a range of a UDT member array |
 | UDT member | `MyUDT.MemberName` | Read/write a single structure member |
 | Whole UDT/STRUCT | `MyUDT` | Full structure as an object (needs tag list) |
+| Array of UDTs | `MyUDT` where `MyUDT : MyType[5]` | One object per element |
 | Program-scoped | `Program:MainProgram.MyTag` | Tag inside a program |
 | Batch | `msg.tags = ["Tag1","Tag2"]` | Multi-tag read via TagGroup |
 
+Tag paths are matched **case-insensitively**, the way Logix itself treats them —
+`fis_stn[0].local` and `FIS_Stn[0].Local` address the same tag and both decode into
+an object.
+
 On **cip-read**, the **Data Type** field controls decoding: `Auto-detect` returns
 scalars natively and expands whole arrays and UDT/STRUCT tags when the endpoint's
-tag list is available; `ARRAY` forces a full array read (size from the tag list, or
-probed, or via `msg.arraySize`); `STRUCT` forces UDT decoding. Auto-detect of full
-arrays and structures requires the tag list, which ControlLogix/CompactLogix provide
-on connect.
+tag list is available; `ARRAY` forces a full array read; `STRUCT` forces UDT
+decoding. Auto-detect of full arrays and structures requires the tag list, which
+ControlLogix/CompactLogix provide on connect.
+
+**Array lengths** are resolved in this order, and memoised until the connection is
+re-established, so a polled array costs one request per poll:
+
+1. `msg.arraySize`, if you set it.
+2. The UDT template, for a member array such as `MyStruct.Member` — the controller
+   sends the element count with the tag list.
+3. Symbol Object attribute 8 (array dimensions), for controller- and program-scoped
+   array tags, whose length the tag list does not carry. One request, exact answer.
+4. A bisecting index probe (~2·log2 n requests), if a controller does not answer
+   attribute 8.
 
 ### PCCC (SLC/MLX/PLC-5)
 
@@ -138,6 +153,27 @@ on connect.
 | Electronic keying | off | Add an Electronic Key segment to the connection path. **Off = no key** ("don't check identity"), the most compatible choice. Enable only if a strict target rejects an unkeyed connection, then fill in Vendor ID / Device Type / Product Code / Major+Minor revision (from the device EDS). The compatibility bit accepts compatible revisions instead of an exact match |
 
 The produced/consumed assemblies are addressed with **Connection Point** path segments and the connection is opened with the transport direction set to **Server** (`0x81`) — both required by stricter drive firmware such as the PowerFlex 525.
+
+When a target refuses the connection, the node reports both status words, for example:
+
+```
+ForwardOpen refused by target: CIP status 0x01 (Connection failure),
+extended 0x012a (Invalid Originator→Target application path)
+```
+
+The general status of a refused I/O connection is nearly always `0x01` "connection
+failure" and says nothing useful — the **extended** status is the one that names the
+parameter the target objected to. The common ones:
+
+| Extended | Meaning | Usually means |
+|----------|---------|---------------|
+| `0x0103` | Transport class and trigger combination not supported | Target wants a different transport byte |
+| `0x0106` | Ownership conflict | Another scanner (often a PLC) already owns the connection point |
+| `0x0110` | Target application not configured for this connection | Wrong assembly instance, or the device needs configuring first |
+| `0x0111` | RPI not supported | Requested RPI outside the device's range |
+| `0x0114`–`0x0116` | Electronic key mismatch | Vendor / device type / revision in the key does not match |
+| `0x0127` / `0x0128` | Invalid O→T / T→O connection size | Input or Output Size wrong — check whether the Run/Idle header's 4 bytes are counted |
+| `0x012a` / `0x012b` | Invalid O→T / T→O application path | Wrong Output or Input assembly instance |
 
 ## Drive Control (PowerFlex 525)
 
@@ -207,7 +243,7 @@ docker compose up -d
 
 Each profile provides a realistic tag set:
 
-- **ControlLogix** — 10 tags (BOOL, INT, DINT, REAL, STRING, program-scoped)
+- **ControlLogix** — scalars (BOOL, INT, DINT, REAL, LINT), arrays (`MyIntArray` INT[10], `MyRealArray` REAL[5]), program-scoped tags (`Program:MainProgram.Speed`, `Program:MainProgram.Recipe` INT[8]), and a nested UDT array `FIS_Stn : FIS_STATION[5]` whose `Local` member holds `FBCONTROL DINT[2]`, `FBFACTUAL REAL[102]`, `FBCOMPARE REAL[102]` and `FBRESULT DINT[2]` — 832 bytes per element, so struct reads exercise fragmentation
 - **CompactLogix** — Same as CLX
 - **Micro800** — 24 I/O tags (10 DO + 14 DI, all BOOL)
 - **MicroLogix** — PCCC registers (N7, F8, B3, T4, C5, S)
@@ -220,11 +256,13 @@ Each profile provides a realistic tag set:
 |---------|------|-------------|
 | RegisterSession | 0x0065 | Session establishment |
 | ForwardOpen/Close | 0x54/0x4E | Connected messaging |
-| ReadTag | 0x4C | Read tag values |
+| ReadTag | 0x4C | Read tag values — honours the requested element count, answers `0xFF`/`0x2105` past the end of a tag |
+| ReadTagFragmented | 0x52 | Continues a read too large for one packet (structs, long arrays) |
 | WriteTag | 0x4D | Write tag values |
-| GetInstanceAttributeList | 0x55 | Tag browsing |
+| GetInstanceAttributeList | 0x55 | Tag browsing — type word carries the array and structure flags |
 | GetAttributeAll | 0x01 | Controller identity |
-| GetAttributeSingle | 0x0E | Single attribute read |
+| GetAttributeSingle | 0x0E | Single attribute read, incl. Symbol Object array dimensions (attr 8) |
+| Template Object | 0x6C | UDT definitions — attributes and Read Template, so struct tags decode |
 | ExecutePCCC | 0x4B | PCCC over CIP |
 | MultipleServicePacket | 0x0A | Batch operations |
 | Implicit I/O (Class 1) | — | Cyclic UDP assemblies for the PowerFlex 525 drive profile (ForwardOpen + UDP 2222) |
@@ -262,13 +300,16 @@ npm test
 
 Tests cover:
 - Tag name parsing (bit, array, range, program-scoped)
+- Tag path canonicalisation against the controller's tag list and UDT templates
+- Array length resolution (Symbol Object dimensions, bisecting index probe, caching)
 - Bit manipulation (getBit, setBit, buildBitMasks)
-- CIP status/type name resolution
+- CIP status/type name resolution, including Connection Manager extended status
 - PCCC address parsing (all file types, sub-elements, bit access)
 - PCCC command building and response parsing
 - CIP path building (8-bit/16-bit segments, attributeId edge cases)
 - **Forward_Open framing** — strict PowerFlex 525 acceptance (transport byte, Connection Point vs Instance segments, electronic key parsing)
-- **cip-io-scanner end-to-end** — the real node drives the PowerFlex 525 simulator over TCP ForwardOpen + cyclic UDP I/O, asserting the connection establishes and data flows both directions
+- **cip-read end-to-end** — the real node reads whole arrays, nested UDTs, arrays of UDTs, ranges, program-scoped tags and batches from the ControlLogix simulator, over fragmented responses
+- **cip-io-scanner end-to-end** — the real node drives the PowerFlex 525 simulator over TCP ForwardOpen + cyclic UDP I/O, asserting the connection establishes, data flows both directions, and a refused connection surfaces its extended status
 
 To exercise implicit I/O manually without Docker, run the drive simulator directly and point a `cip-io-scanner` node (Output 2 / Input 1 / Config 6, sizes 4 / 8, Run/Idle on) at `127.0.0.1:44818`:
 
@@ -285,6 +326,20 @@ npm run sim:pf525
   "payload": "<tag value>",
   "tagName": "MyDint",
   "dataType": "DINT",
+  "timestamp": 1710000000000
+}
+```
+
+Batch read (`msg.tags`) — `payload` is an array in the order requested, and a tag that
+could not be read carries an `error` string instead of a value:
+
+```json
+{
+  "payload": [
+    { "tagName": "MyDint", "value": 42, "type": "DINT" },
+    { "tagName": "MyIntArray", "value": [100, 200, 300], "type": "INT" },
+    { "tagName": "Missing", "value": null, "type": "", "error": "..." }
+  ],
   "timestamp": 1710000000000
 }
 ```
