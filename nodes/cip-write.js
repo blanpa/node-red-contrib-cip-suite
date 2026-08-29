@@ -276,7 +276,7 @@ module.exports = function (RED) {
                 node.send(msg);
             }
             catch (err) {
-                node.status({ fill: "red", shape: "ring", text: err.message });
+                node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
                 msg.payload = {
                     success: false,
                     tagName: msg.tagName || node.tagName,

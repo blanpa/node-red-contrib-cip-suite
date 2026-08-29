@@ -164,8 +164,8 @@ module.exports = function (RED) {
                 node.send(msg);
             }
             catch (err) {
-                node.status({ fill: "red", shape: "ring", text: err.message });
-                node.error(`Browse failed: ${err.message}`, msg);
+                node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
+                node.error((0, utils_1.describeCipError)(err), msg);
             }
             finally {
                 node._browsing = false;

@@ -22,6 +22,8 @@ import {
   STATUS,
   withTiming,
   cipTypeName,
+  describeCipError,
+  toCipError,
 } from "./utils";
 import { ArraySizeCache, resolveArrayLength } from "./tag-array";
 
@@ -386,8 +388,8 @@ module.exports = function (RED: any) {
         });
         node.send(msg);
       } catch (err: any) {
-        node.status({ fill: "red", shape: "ring", text: err.message });
-        node.error(`Read failed: ${err.message}`, triggerMsg || {});
+        node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
+        node.error(toCipError(err, "Read failed").message, triggerMsg || {});
       } finally {
         node._reading = false;
       }

@@ -251,8 +251,38 @@ export interface CipEndpointConfig {
   slot: string;
   connTimeout: string;
   retryInterval: string;
+  maxRetryInterval: string;  // backoff ceiling; equal to retryInterval means a flat cadence
+  keepAlive: string;  // ms between Identity pings; 0 disables. Controllers drop idle sessions
   useMicro800: boolean;
   routingPath: string;  // multi-hop routing (e.g., "1/2/192.168.1.1")
+}
+
+/**
+ * Connection settings that may be supplied at runtime via msg.endpoint.
+ * Every field is optional: an override applies only the properties it carries.
+ */
+export interface CipEndpointOverride {
+  target?: "config";
+  address?: string;
+  port?: string | number;
+  slot?: string | number;
+  connTimeout?: string | number;
+  retryInterval?: string | number;
+  maxRetryInterval?: string | number;
+  useMicro800?: boolean;
+  routingPath?: string;
+  /** Cycle an already-live connection instead of refusing the override. */
+  force?: boolean;
+}
+
+export interface CipEndpointStatus extends ConnectionMetrics {
+  state: "connected" | "connecting" | "disconnected";
+  uptime: number;
+  address: string;
+  port: number;
+  slot: number;
+  useMicro800: boolean;
+  routingPath: string | null;
 }
 
 export interface CipEndpointNode extends NodeRedNode {
@@ -261,6 +291,8 @@ export interface CipEndpointNode extends NodeRedNode {
   slot: number;
   connTimeout: number;
   retryInterval: number;
+  maxRetryInterval: number;
+  keepAlive: number;
   useMicro800: boolean;
   routingPath: string;
   plc: any; // st-ethernet-ip Controller
@@ -268,9 +300,15 @@ export interface CipEndpointNode extends NodeRedNode {
   connecting: boolean;
   metrics: ConnectionMetrics;
   register(userNode: any): void;
-  deregister(userNode: any): void;
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
+  /** `autoDisconnect` is the caller's `removed` flag: tear down on delete, not on redeploy. */
+  deregister(userNode: any, done?: () => void, autoDisconnect?: boolean): void;
+  /** The callback fires when the attempt settles, not when it is started. */
+  connect(cb?: (err: Error | null) => void): Promise<void>;
+  disconnect(cb?: () => void): Promise<void>;
+  /** Copies only the properties present on `opts` unless `init`. Returns the changed keys. */
+  setOptions(opts: Partial<CipEndpointOverride>, init?: boolean): string[];
+  canConnect(): boolean;
+  getStatus(): CipEndpointStatus;
   readTag(tagName: string): Promise<{ value: any; type: string }>;
   writeTag(tagName: string, value: any, dataType?: number): Promise<void>;
   readModifyWriteTag(tagName: string, orMask: Buffer, andMask: Buffer): Promise<void>;

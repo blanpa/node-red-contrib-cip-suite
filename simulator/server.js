@@ -35,6 +35,11 @@ const MAX_REPLY_DATA = 500;
 const TAG_SERVICES = new Set([0x4c, 0x4d, 0x4e, 0x52, 0x53]);
 
 const PORT = parseInt(process.env.EIP_PORT, 10) || 44818;
+// Bind address. Several simulators can run at once on the standard port 44818 by giving
+// each a distinct loopback address (127.0.0.1, 127.0.0.2, ...), which is how you model
+// separate PLCs on one machine. Distinct ports do not work for that: EtherNet/IP clients
+// generally assume 44818, and st-ethernet-ip hardcodes it.
+const EIP_HOST = process.env.EIP_HOST || "0.0.0.0";
 const IO_UDP_PORT = parseInt(process.env.IO_UDP_PORT, 10) || 2222;
 const profile = getProfile(process.env.PLC_TYPE);
 const tags = createDefaultTags(profile.tagSet);
@@ -342,8 +347,8 @@ function startIoUdpServer() {
   ioUdpSocket = dgram.createSocket("udp4");
   ioUdpSocket.on("message", handleIoOutputPacket);
   ioUdpSocket.on("error", (err) => console.error(`  [I/O] UDP error: ${err.message}`));
-  ioUdpSocket.bind(IO_UDP_PORT, () => {
-    console.log(`  [I/O] implicit messaging UDP listening on :${IO_UDP_PORT}`);
+  ioUdpSocket.bind(IO_UDP_PORT, EIP_HOST === "0.0.0.0" ? undefined : EIP_HOST, () => {
+    console.log(`  [I/O] implicit messaging UDP listening on ${EIP_HOST}:${IO_UDP_PORT}`);
   });
 }
 
@@ -1881,13 +1886,13 @@ function buildListIdentity() {
 
 // ─── Start ──────────────────────────────────────────────────────────
 
-server.listen(PORT, "0.0.0.0", () => {
+server.listen(PORT, EIP_HOST, () => {
   console.log("===========================================");
   console.log("  CIP PLC Simulator");
   console.log(`  Profile:  ${profile.name}`);
   console.log(`  Vendor:   0x${profile.vendor.toString(16).padStart(4, "0")} | DevType: 0x${profile.deviceType.toString(16).padStart(4, "0")} | ProdCode: 0x${profile.productCode.toString(16).padStart(4, "0")}`);
   console.log(`  Revision: ${profile.majorRevision}.${profile.minorRevision} | Serial: 0x${profile.serial.toString(16)}`);
-  console.log(`  Port:     ${PORT}`);
+  console.log(`  Listen:   ${EIP_HOST}:${PORT}`);
   console.log(`  Tags:     ${tags.size}`);
   console.log("-------------------------------------------");
   console.log("  Capabilities:");

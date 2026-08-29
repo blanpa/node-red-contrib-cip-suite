@@ -11,7 +11,9 @@
  */
 
 import { CIPDataType, TagInfo } from "./types";
-import { cipTypeName, STATUS } from "./utils";
+import { cipTypeName, STATUS ,
+  describeCipError,
+  toCipError,} from "./utils";
 
 module.exports = function (RED: any) {
   function CipBrowseNode(this: any, config: any) {
@@ -188,8 +190,8 @@ module.exports = function (RED: any) {
         msg.timestamp = Date.now();
         node.send(msg);
       } catch (err: any) {
-        node.status({ fill: "red", shape: "ring", text: err.message });
-        node.error(`Browse failed: ${err.message}`, msg);
+        node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
+        node.error(describeCipError(err), msg);
       } finally {
         node._browsing = false;
       }

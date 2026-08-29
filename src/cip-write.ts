@@ -13,7 +13,9 @@
  */
 
 import { CIPDataType, WriteResult } from "./types";
-import { parseTagName, getBit, setBit, buildBitMasks, STATUS, withTiming, cipTypeName } from "./utils";
+import { parseTagName, getBit, setBit, buildBitMasks, STATUS, withTiming, cipTypeName ,
+  describeCipError,
+  toCipError,} from "./utils";
 
 module.exports = function (RED: any) {
   function CipWriteNode(this: any, config: any) {
@@ -310,7 +312,7 @@ module.exports = function (RED: any) {
         msg.payload = result;
         node.send(msg);
       } catch (err: any) {
-        node.status({ fill: "red", shape: "ring", text: err.message });
+        node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
         msg.payload = {
           success: false,
           tagName: msg.tagName || node.tagName,
