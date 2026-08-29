@@ -7,6 +7,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const utils_1 = require("./utils");
+const endpoint_dynamic_1 = require("./endpoint-dynamic");
 /** Controller run mode status bit masks (CIP Identity Object, Attribute 5). */
 const RUN_MODE_MAP = {
     0x0000: "unknown",
@@ -69,6 +70,28 @@ module.exports = function (RED) {
             node.status({ fill: "red", shape: "ring", text: "no endpoint" });
             return;
         }
+        // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+        // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+        // which after a restart is the previous run's status.
+        (0, endpoint_dynamic_1.applyInitialStatus)(node);
+        /** Rebind to a different endpoint, moving our registration with us. */
+        function useEndpoint(endpoint) {
+            if (endpoint === node.endpoint)
+                return;
+            stopPolling();
+            // Deregistering is enough to stop the old endpoint's broadcasts reaching us: it
+            // fans out by emitting on its registered user nodes.
+            if (node.endpoint)
+                node.endpoint.deregister(node);
+            node.endpoint = endpoint;
+            endpoint.register(node, { connect: false });
+            if (!endpoint.connected) {
+                node.status(endpoint.connecting
+                    ? utils_1.STATUS.connecting((0, endpoint_dynamic_1.endpointLabel)(node))
+                    : utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
+            }
+        }
+        const DYN = { type: "cip-endpoint", switchTo: useEndpoint };
         /**
          * Read controller properties and send as output message.
          */
@@ -76,7 +99,7 @@ module.exports = function (RED) {
             if (node._reading)
                 return; // backpressure
             if (!node.endpoint.connected) {
-                node.status(utils_1.STATUS.disconnected());
+                node.status(utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
                 return;
             }
             node._reading = true;
@@ -262,11 +285,11 @@ module.exports = function (RED) {
         }
         // -- Connection lifecycle events --
         node.on("cip:connected", function () {
-            node.status(utils_1.STATUS.connected());
+            node.status(utils_1.STATUS.connected((0, endpoint_dynamic_1.endpointLabel)(node)));
             startPolling();
         });
         node.on("cip:connecting", function () {
-            node.status(utils_1.STATUS.connecting());
+            node.status(utils_1.STATUS.connecting((0, endpoint_dynamic_1.endpointLabel)(node)));
             stopPolling();
         });
         node.on("cip:error", function () {
@@ -274,34 +297,36 @@ module.exports = function (RED) {
             stopPolling();
         });
         node.on("cip:disconnected", function () {
-            node.status(utils_1.STATUS.disconnected());
+            node.status(utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
             stopPolling();
         });
         // -- Input handling --
-        node.on("input", function (msg) {
-            // Handle runtime commands
-            if (msg.command) {
-                if (!node.endpoint.connected) {
-                    node.error("Not connected to PLC", msg);
+        node.on("input", function (msg, send, done) {
+            // msg.command (run/program/test/reset) is this node's own vocabulary and is
+            // unrelated to msg.action, which controls the connection.
+            if ((0, endpoint_dynamic_1.handleEndpointMsg)(RED, node, msg, send, done, DYN))
+                return;
+            (0, endpoint_dynamic_1.ensureConnected)(node)
+                .then(() => {
+                if (msg.command) {
+                    handleCommand(msg.command, msg);
                     return;
                 }
-                handleCommand(msg.command, msg);
-                return;
-            }
-            // Trigger-based read
-            if (!node.endpoint.connected) {
-                node.status(utils_1.STATUS.disconnected());
-                node.error("Not connected to PLC", msg);
-                return;
-            }
-            readControllerInfo(msg);
+                readControllerInfo(msg);
+            })
+                .catch((err) => {
+                node.status(utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
+                done ? done(err) : node.error(err.message, msg);
+            });
         });
         // Register with endpoint
-        node.endpoint.register(node);
-        node.on("close", function (done) {
+        if (node.endpoint)
+            node.endpoint.register(node);
+        node.on("close", function (removed, done) {
             stopPolling();
             if (node.endpoint) {
-                node.endpoint.deregister(node);
+                node.endpoint.deregister(node, done, removed);
+                return;
             }
             done();
         });

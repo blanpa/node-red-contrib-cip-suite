@@ -12,6 +12,12 @@ import {
   NodeStatus,
 } from "./types";
 import { parseTagList, cipTypeName, STATUS } from "./utils";
+import {
+  DynOpts,
+  handleEndpointMsg,
+  endpointLabel,
+  applyInitialStatus
+} from "./endpoint-dynamic";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Tag, TagGroup } = require("st-ethernet-ip");
@@ -43,6 +49,76 @@ module.exports = function (RED: any) {
       node.status({ fill: "red", shape: "ring", text: "no endpoint" } as NodeStatus);
       return;
     }
+
+    // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+    // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+    // which after a restart is the previous run's status.
+    applyInitialStatus(node);
+
+    /**
+     * Rebind to a different endpoint.
+     *
+     * The TagGroup is built against a specific controller's tag list, so it has to be torn
+     * down and rebuilt rather than carried across.
+     */
+    function useEndpoint(endpoint: any): void {
+      if (endpoint === node.endpoint) return;
+      stopScan();
+      teardownTags();
+      if (node.endpoint) node.endpoint.deregister(node);
+      node.endpoint = endpoint;
+      endpoint.register(node, { connect: false });
+      if (endpoint.connected) {
+        const tagNames = resolveTagNames();
+        if (tagNames.length > 0) {
+          setupTags(tagNames);
+          startScan();
+        }
+      } else {
+        node.status(
+          endpoint.connecting
+            ? STATUS.connecting(endpointLabel(node))
+            : STATUS.disconnected(endpointLabel(node))
+        );
+      }
+    }
+
+    const DYN: DynOpts = {
+      type: "cip-endpoint",
+      switchTo: useEndpoint,
+      // Documented at nodes/cip-subscribe.html but never implemented until now.
+      extraActions: {
+        start: (_msg: any, _send: any, done: any) => {
+          const tagNames = resolveTagNames();
+          if (tagNames.length === 0) {
+            done(new Error("No tags configured"));
+            return;
+          }
+          if (!node._scanning) {
+            setupTags(tagNames);
+            startScan();
+          }
+          done();
+        },
+        stop: (_msg: any, _send: any, done: any) => {
+          stopScan();
+          node.status(STATUS.idle());
+          done();
+        },
+        restart: (_msg: any, _send: any, done: any) => {
+          stopScan();
+          teardownTags();
+          const tagNames = resolveTagNames();
+          if (tagNames.length === 0) {
+            done(new Error("No tags configured"));
+            return;
+          }
+          setupTags(tagNames);
+          startScan();
+          done();
+        },
+      },
+    };
 
     /**
      * Parse tag names from config string or msg override.
@@ -244,7 +320,7 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:connecting", function () {
-      node.status(STATUS.connecting());
+      node.status(STATUS.connecting(endpointLabel(node)));
       stopScan();
     });
 
@@ -254,13 +330,20 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:disconnected", function () {
-      node.status(STATUS.disconnected());
+      node.status(STATUS.disconnected(endpointLabel(node)));
       stopScan();
     });
 
     // -- Runtime input for reconfiguration --
 
-    node.on("input", function (msg: any) {
+    node.on("input", function (msg: any, send: any, done: any) {
+      // msg.command is kept as a deprecated alias for the start/stop/restart actions the
+      // help has always documented.
+      if (msg.action === undefined && typeof msg.command === "string") {
+        msg = { ...msg, action: msg.command };
+      }
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
+
       // Runtime override: change tag list
       if (msg.tags !== undefined) {
         const newTags = typeof msg.tags === "string"
@@ -292,13 +375,14 @@ module.exports = function (RED: any) {
     });
 
     // Register with endpoint
-    node.endpoint.register(node);
+    if (node.endpoint) node.endpoint.register(node);
 
-    node.on("close", function (done: () => void) {
+    node.on("close", function (removed: boolean, done: () => void) {
       stopScan();
       teardownTags();
       if (node.endpoint) {
-        node.endpoint.deregister(node);
+        node.endpoint.deregister(node, done, removed);
+        return;
       }
       done();
     });

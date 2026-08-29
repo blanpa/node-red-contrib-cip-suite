@@ -255,6 +255,8 @@ export interface CipEndpointConfig {
   keepAlive: string;  // ms between Identity pings; 0 disables. Controllers drop idle sessions
   useMicro800: boolean;
   routingPath: string;  // multi-hop routing (e.g., "1/2/192.168.1.1")
+  autoConnect: boolean;  // false leaves the session idle until msg.action="connect"
+  allowDynamic: boolean;  // opt in to msg.action / msg.endpoint control
 }
 
 /**
@@ -283,6 +285,7 @@ export interface CipEndpointStatus extends ConnectionMetrics {
   slot: number;
   useMicro800: boolean;
   routingPath: string | null;
+  autoConnect: boolean;
 }
 
 export interface CipEndpointNode extends NodeRedNode {
@@ -295,11 +298,14 @@ export interface CipEndpointNode extends NodeRedNode {
   keepAlive: number;
   useMicro800: boolean;
   routingPath: string;
+  autoConnect: boolean;
+  allowDynamic: boolean;
   plc: any; // st-ethernet-ip Controller
   connected: boolean;
   connecting: boolean;
   metrics: ConnectionMetrics;
-  register(userNode: any): void;
+  /** `connect: false` registers interest without bringing the session up (used by "switch"). */
+  register(userNode: any, opts?: { connect?: boolean }): void;
   /** `autoDisconnect` is the caller's `removed` flag: tear down on delete, not on redeploy. */
   deregister(userNode: any, done?: () => void, autoDisconnect?: boolean): void;
   /** The callback fires when the attempt settles, not when it is started. */

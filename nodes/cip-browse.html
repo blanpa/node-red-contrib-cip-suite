@@ -52,6 +52,12 @@
   <p>Retrieves the full tag list from the PLC controller. Backpressure is applied: concurrent browse requests are dropped.</p>
   <p>Use the <b>Preview tags</b> button in the node settings to see available tags before deploying.
   The endpoint must be deployed and connected first.</p>
+
+  <h3>Dynamic control</h3>
+  <p>The PLC connection can be selected, re-pointed and controlled at runtime with
+  <code>msg.endpoint</code> and <code>msg.action</code> when the endpoint has the
+  <b>Dynamic</b> option enabled. See the <code>cip-endpoint</code> help for the
+  full reference.</p>
 </script>
 
 <script type="text/javascript">

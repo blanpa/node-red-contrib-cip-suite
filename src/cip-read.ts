@@ -26,13 +26,20 @@ import {
   toCipError,
 } from "./utils";
 import { ArraySizeCache, resolveArrayLength } from "./tag-array";
+import {
+  DynOpts,
+  handleEndpointMsg,
+  ensureConnected,
+  endpointLabel,
+  applyInitialStatus,
+} from "./endpoint-dynamic";
 
 module.exports = function (RED: any) {
   function CipReadNode(this: any, config: any) {
     RED.nodes.createNode(this, config);
     const node = this;
 
-    node.endpoint = RED.nodes.getNode(config.endpoint);
+    node.endpoint = RED.nodes.getNode(config.endpoint) || null;
     node.tagName = config.tagName || "";
     node.dataType = config.dataType || "auto";
     node.pollInterval = parseInt(config.pollInterval, 10) || 0;
@@ -46,6 +53,37 @@ module.exports = function (RED: any) {
       node.status({ fill: "red", shape: "ring", text: "no endpoint" });
       return;
     }
+
+    // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+    // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+    // which after a restart is the previous run's status.
+    applyInitialStatus(node);
+
+    /** Rebind to a different endpoint, moving our registration with us. */
+    function useEndpoint(endpoint: any): void {
+      if (endpoint === node.endpoint) {
+        return;
+      }
+      stopPolling();
+      // Deregistering is enough to stop the old endpoint's broadcasts reaching us: it
+      // fans out by emitting on its registered user nodes, so our cip:* listeners never
+      // need rewiring.
+      if (node.endpoint) node.endpoint.deregister(node);
+      node.endpoint = endpoint;
+      endpoint.register(node, { connect: false });
+
+      // register() only emits an event when the new endpoint is already connected, so
+      // without this the status would still name the endpoint we just left.
+      if (!endpoint.connected) {
+        node.status(
+          endpoint.connecting
+            ? STATUS.connecting(endpointLabel(node))
+            : STATUS.disconnected(endpointLabel(node))
+        );
+      }
+    }
+
+    const DYN: DynOpts = { type: "cip-endpoint", switchTo: useEndpoint };
 
     function isStructureTag(tag: any): boolean {
       return tag != null && tag._template != null;
@@ -95,6 +133,7 @@ module.exports = function (RED: any) {
       options: { dataType?: string; arraySize?: number } = {}
     ): Promise<{ value: any; type: string; bitIndex?: number; arrayIndex?: number }> {
       const parsed = parseTagName(tagName);
+      if (!node.endpoint) throw new Error("No endpoint selected");
       const controller = node.endpoint.getController();
       if (!controller) throw new Error("Controller not available");
 
@@ -239,6 +278,7 @@ module.exports = function (RED: any) {
     async function readBatch(
       tags: string[]
     ): Promise<MultiTagResult[]> {
+      if (!node.endpoint) throw new Error("No endpoint selected");
       const controller = node.endpoint.getController();
       if (!controller) throw new Error("Controller not available");
 
@@ -268,9 +308,7 @@ module.exports = function (RED: any) {
           tagObjects.push({ name: tagName, tag: null, individual: true });
         } else {
           const fullName =
-            parsed.arrayIndex !== null
-              ? `${parsed.baseName}[${parsed.arrayIndex}]`
-              : parsed.baseName;
+            parsed.arrayIndex !== null ? `${parsed.baseName}[${parsed.arrayIndex}]` : scope.name;
           const tag = createTag(controller, fullName, scope.program);
           group.add(tag);
           tagObjects.push({ name: tagName, tag, individual: false });
@@ -315,8 +353,28 @@ module.exports = function (RED: any) {
     /**
      * Read the configured tag and send the result.
      */
-    async function doRead(triggerMsg?: any): Promise<void> {
-      if (node._reading) return;
+    async function doRead(triggerMsg?: any, done?: any): Promise<void> {
+      // Errors reach done() so a Catch node can see them. Polling passes no done, so its
+      // failures still surface through node.error as before.
+      const settle = (err?: Error): void => {
+        if (typeof done === "function") {
+          err ? done(err) : done();
+        } else if (err) {
+          node.error(err.message, triggerMsg || {});
+        }
+      };
+      /** Which PLC answered. Only stamped when the endpoint opts in, so static output is unchanged. */
+      const stamp = (msg: any): any => {
+        if (node.endpoint && node.endpoint.allowDynamic) {
+          msg.endpoint = node.endpoint.name || node.endpoint.id;
+        }
+        return msg;
+      };
+
+      if (node._reading) {
+        settle();
+        return;
+      }
 
       node._reading = true;
       try {
@@ -335,13 +393,15 @@ module.exports = function (RED: any) {
             shape: "dot",
             text: `${batchResult.length} tags read (${elapsed}ms)`,
           });
-          node.send(msg);
+          node.send(stamp(msg));
+          settle();
           return;
         }
 
         const tag = (triggerMsg && triggerMsg.tagName) || node.tagName;
         if (!tag) {
           node.warn("No tag name specified");
+          settle();
           return;
         }
 
@@ -353,7 +413,9 @@ module.exports = function (RED: any) {
               : undefined,
         };
 
+
         const { result, elapsed } = await withTiming(() => readSingleTag(tag, readOptions));
+
         const msg: any = {
           payload: result.value,
           tagName: tag,
@@ -386,10 +448,11 @@ module.exports = function (RED: any) {
           shape: "dot",
           text: `${tag} = ${displayValue} (${elapsed}ms)`,
         });
-        node.send(msg);
+        node.send(stamp(msg));
+        settle();
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
-        node.error(toCipError(err, "Read failed").message, triggerMsg || {});
+        settle(toCipError(err, "Read failed"));
       } finally {
         node._reading = false;
       }
@@ -410,13 +473,13 @@ module.exports = function (RED: any) {
     }
 
     node.on("cip:connected", function () {
-      node.status(STATUS.connected());
+      node.status(STATUS.connected(endpointLabel(node)));
       node._arraySizes.clear();
       startPolling();
     });
 
     node.on("cip:connecting", function () {
-      node.status(STATUS.connecting());
+      node.status(STATUS.connecting(endpointLabel(node)));
       stopPolling();
     });
 
@@ -426,25 +489,35 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:disconnected", function () {
-      node.status(STATUS.disconnected());
+      node.status(STATUS.disconnected(endpointLabel(node)));
       stopPolling();
     });
 
-    node.on("input", function (msg: any) {
-      if (!node.endpoint.connected) {
-        node.status({ fill: "red", shape: "ring", text: "not connected" });
-        node.error("Not connected to PLC", msg);
+    node.on("input", function (msg: any, send: any, done: any) {
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
+
+      if (!node.endpoint) {
+        node.status({ fill: "red", shape: "ring", text: "no endpoint" });
+        const err = new Error("No endpoint selected");
+        done ? done(toCipError(err)) : node.error(describeCipError(err), msg);
         return;
       }
-      doRead(msg);
+
+      ensureConnected(node)
+        .then(() => doRead(msg, done))
+        .catch((err: Error) => {
+          node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
+          done ? done(toCipError(err)) : node.error(describeCipError(err), msg);
+        });
     });
 
-    node.endpoint.register(node);
+    if (node.endpoint) node.endpoint.register(node);
 
-    node.on("close", function (done: () => void) {
+    node.on("close", function (removed: boolean, done: () => void) {
       stopPolling();
       if (node.endpoint) {
-        node.endpoint.deregister(node);
+        node.endpoint.deregister(node, done, removed);
+        return;
       }
       done();
     });

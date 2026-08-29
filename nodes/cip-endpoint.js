@@ -66,7 +66,12 @@ module.exports = function (RED) {
             apply("maxRetryInterval", int, 60000);
             apply("useMicro800", bool, false);
             apply("routingPath", str, "");
+            apply("autoConnect", bool, true);
             apply("keepAlive", int, 30000);
+            // Opt-in, and deliberately not settable by a runtime override: a message must not be
+            // able to unlock the connection it is trying to change.
+            if (init)
+                node.allowDynamic = bool(config.allowDynamic) && config.allowDynamic !== undefined;
             // A NaN from a non-numeric override would poison every later comparison.
             const numericDefaults = {
                 port: 44818,
@@ -181,13 +186,18 @@ module.exports = function (RED) {
          * very first user, as the MQTT broker node does) means a node added to a live flow
          * still brings a dropped session back up.
          */
-        node.register = function (userNode) {
+        node.register = function (userNode, opts) {
             node._users.add(userNode);
             if (node.connected) {
                 userNode.emit("cip:connected");
                 return;
             }
-            if (!node.connecting && !node._closing) {
+            // `connect: false` registers interest without bringing the session up. A "switch"
+            // action uses it, because switching promises to re-point a node and nothing else;
+            // connecting there would make an explicit switch behave like a connect.
+            if (opts && opts.connect === false)
+                return;
+            if (node.autoConnect && !node.connecting && !node._closing) {
                 node.connect();
             }
         };
@@ -225,6 +235,8 @@ module.exports = function (RED) {
                 slot: node.slot,
                 useMicro800: node.useMicro800,
                 routingPath: node.routingPath || null,
+                autoConnect: node.autoConnect,
+                allowDynamic: node.allowDynamic,
             };
         };
         /** Settle every callback waiting on the in-flight connect attempt. */
@@ -546,7 +558,7 @@ module.exports = function (RED) {
          * a shared outage. Setting maxRetryInterval equal to retryInterval restores a flat cadence.
          */
         node._scheduleRetry = function () {
-            if (node._closing)
+            if (node._closing || !node.autoConnect)
                 return;
             clearTimeout(node._retryTimer);
             const base = Math.min(node.retryInterval * Math.pow(2, node._attempt), node.maxRetryInterval);

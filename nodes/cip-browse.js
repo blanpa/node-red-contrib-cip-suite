@@ -13,6 +13,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const types_1 = require("./types");
 const utils_1 = require("./utils");
+const endpoint_dynamic_1 = require("./endpoint-dynamic");
 module.exports = function (RED) {
     function CipBrowseNode(config) {
         RED.nodes.createNode(this, config);
@@ -23,6 +24,27 @@ module.exports = function (RED) {
             node.status({ fill: "red", shape: "ring", text: "no endpoint" });
             return;
         }
+        // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+        // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+        // which after a restart is the previous run's status.
+        (0, endpoint_dynamic_1.applyInitialStatus)(node);
+        /** Rebind to a different endpoint, moving our registration with us. */
+        function useEndpoint(endpoint) {
+            if (endpoint === node.endpoint)
+                return;
+            // Deregistering is enough to stop the old endpoint's broadcasts reaching us: it
+            // fans out by emitting on its registered user nodes.
+            if (node.endpoint)
+                node.endpoint.deregister(node);
+            node.endpoint = endpoint;
+            endpoint.register(node, { connect: false });
+            if (!endpoint.connected) {
+                node.status(endpoint.connecting
+                    ? utils_1.STATUS.connecting((0, endpoint_dynamic_1.endpointLabel)(node))
+                    : utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
+            }
+        }
+        const DYN = { type: "cip-endpoint", switchTo: useEndpoint };
         /**
          * Convert a glob-style pattern to a RegExp.
          * Supports * (any chars) and ? (single char).
@@ -87,21 +109,26 @@ module.exports = function (RED) {
         }
         // Connection lifecycle
         node.on("cip:connected", function () {
-            node.status(utils_1.STATUS.connected());
+            node.status(utils_1.STATUS.connected((0, endpoint_dynamic_1.endpointLabel)(node)));
         });
         node.on("cip:connecting", function () {
-            node.status(utils_1.STATUS.connecting());
+            node.status(utils_1.STATUS.connecting((0, endpoint_dynamic_1.endpointLabel)(node)));
         });
         node.on("cip:error", function () {
             node.status({ fill: "red", shape: "ring", text: "connection error" });
         });
         node.on("cip:disconnected", function () {
-            node.status(utils_1.STATUS.disconnected());
+            node.status(utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
         });
-        node.on("input", async function (msg) {
-            if (!node.endpoint.connected) {
-                node.status({ fill: "red", shape: "ring", text: "not connected" });
-                node.error("Not connected to PLC", msg);
+        node.on("input", async function (msg, send, done) {
+            if ((0, endpoint_dynamic_1.handleEndpointMsg)(RED, node, msg, send, done, DYN))
+                return;
+            try {
+                await (0, endpoint_dynamic_1.ensureConnected)(node);
+            }
+            catch (err) {
+                node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
+                done ? done((0, utils_1.toCipError)(err)) : node.error((0, utils_1.describeCipError)(err), msg);
                 return;
             }
             if (node._browsing) {
@@ -171,7 +198,8 @@ module.exports = function (RED) {
                 node._browsing = false;
             }
         });
-        node.endpoint.register(node);
+        if (node.endpoint)
+            node.endpoint.register(node);
         node.on("close", function (done) {
             if (node.endpoint) {
                 node.endpoint.deregister(node);

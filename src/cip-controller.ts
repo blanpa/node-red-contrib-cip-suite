@@ -12,6 +12,13 @@ import {
   NodeStatus,
 } from "./types";
 import { STATUS } from "./utils";
+import {
+  DynOpts,
+  handleEndpointMsg,
+  ensureConnected,
+  endpointLabel,
+  applyInitialStatus
+} from "./endpoint-dynamic";
 
 /** Controller run mode status bit masks (CIP Identity Object, Attribute 5). */
 const RUN_MODE_MAP: Record<number, string> = {
@@ -88,13 +95,38 @@ module.exports = function (RED: any) {
       return;
     }
 
+    // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+    // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+    // which after a restart is the previous run's status.
+    applyInitialStatus(node);
+
+    /** Rebind to a different endpoint, moving our registration with us. */
+    function useEndpoint(endpoint: any): void {
+      if (endpoint === node.endpoint) return;
+      stopPolling();
+      // Deregistering is enough to stop the old endpoint's broadcasts reaching us: it
+      // fans out by emitting on its registered user nodes.
+      if (node.endpoint) node.endpoint.deregister(node);
+      node.endpoint = endpoint;
+      endpoint.register(node, { connect: false });
+      if (!endpoint.connected) {
+        node.status(
+          endpoint.connecting
+            ? STATUS.connecting(endpointLabel(node))
+            : STATUS.disconnected(endpointLabel(node))
+        );
+      }
+    }
+
+    const DYN: DynOpts = { type: "cip-endpoint", switchTo: useEndpoint };
+
     /**
      * Read controller properties and send as output message.
      */
     async function readControllerInfo(triggerMsg?: any): Promise<void> {
       if (node._reading) return; // backpressure
       if (!node.endpoint.connected) {
-        node.status(STATUS.disconnected());
+        node.status(STATUS.disconnected(endpointLabel(node)));
         return;
       }
 
@@ -292,12 +324,12 @@ module.exports = function (RED: any) {
     // -- Connection lifecycle events --
 
     node.on("cip:connected", function () {
-      node.status(STATUS.connected());
+      node.status(STATUS.connected(endpointLabel(node)));
       startPolling();
     });
 
     node.on("cip:connecting", function () {
-      node.status(STATUS.connecting());
+      node.status(STATUS.connecting(endpointLabel(node)));
       stopPolling();
     });
 
@@ -307,39 +339,39 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:disconnected", function () {
-      node.status(STATUS.disconnected());
+      node.status(STATUS.disconnected(endpointLabel(node)));
       stopPolling();
     });
 
     // -- Input handling --
 
-    node.on("input", function (msg: any) {
-      // Handle runtime commands
-      if (msg.command) {
-        if (!node.endpoint.connected) {
-          node.error("Not connected to PLC", msg);
-          return;
-        }
-        handleCommand(msg.command, msg);
-        return;
-      }
+    node.on("input", function (msg: any, send: any, done: any) {
+      // msg.command (run/program/test/reset) is this node's own vocabulary and is
+      // unrelated to msg.action, which controls the connection.
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
 
-      // Trigger-based read
-      if (!node.endpoint.connected) {
-        node.status(STATUS.disconnected());
-        node.error("Not connected to PLC", msg);
-        return;
-      }
-      readControllerInfo(msg);
+      ensureConnected(node)
+        .then(() => {
+          if (msg.command) {
+            handleCommand(msg.command, msg);
+            return;
+          }
+          readControllerInfo(msg);
+        })
+        .catch((err: Error) => {
+          node.status(STATUS.disconnected(endpointLabel(node)));
+          done ? done(err) : node.error(err.message, msg);
+        });
     });
 
     // Register with endpoint
-    node.endpoint.register(node);
+    if (node.endpoint) node.endpoint.register(node);
 
-    node.on("close", function (done: () => void) {
+    node.on("close", function (removed: boolean, done: () => void) {
       stopPolling();
       if (node.endpoint) {
-        node.endpoint.deregister(node);
+        node.endpoint.deregister(node, done, removed);
+        return;
       }
       done();
     });

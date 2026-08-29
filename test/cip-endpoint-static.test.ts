@@ -76,6 +76,8 @@ const DEFAULT_CONFIG = {
   keepAlive: 0,
   useMicro800: false,
   routingPath: "",
+  autoConnect: false,
+  allowDynamic: false,
 };
 
 let endpointCtor: any;
@@ -152,6 +154,7 @@ describe("options", () => {
     expect(node.port).toBe(44818);
     expect(node.slot).toBe(0);
     expect(node.keepAlive).toBe(30000);
+    expect(node.autoConnect).toBe(false);
   });
 
   it("coerces numeric strings and keeps slot 0", () => {
@@ -164,6 +167,16 @@ describe("options", () => {
   it("falls back rather than storing NaN", () => {
     const node = makeEndpoint({ port: "not-a-port" });
     expect(node.port).toBe(44818);
+  });
+
+  it("treats autoConnect absent as true and the string 'false' as false", () => {
+    expect(makeEndpoint({ autoConnect: undefined }).autoConnect).toBe(true);
+    expect(makeEndpoint({ autoConnect: "false" }).autoConnect).toBe(false);
+  });
+
+  it("defaults allowDynamic to off", () => {
+    expect(makeEndpoint({ allowDynamic: undefined }).allowDynamic).toBe(false);
+    expect(makeEndpoint({ allowDynamic: true }).allowDynamic).toBe(true);
   });
 
   it("raises maxRetryInterval to at least retryInterval", () => {
@@ -179,6 +192,12 @@ describe("options", () => {
     expect(node.connTimeout).toBe(200);
   });
 
+  it("a runtime override cannot unlock dynamic control", () => {
+    const node = makeEndpoint({ allowDynamic: false });
+    node.setOptions({ allowDynamic: true }, false);
+    expect(node.allowDynamic).toBe(false);
+  });
+
   it("reports no change when the value is the same", () => {
     const node = makeEndpoint();
     expect(node.setOptions({ address: "10.0.0.1" }, false)).toEqual([]);
@@ -192,18 +211,11 @@ describe("nodes sharing one endpoint", () => {
     const b = makeUser("browse1");
     node.register(a);
     node.register(b);
+
     await connectAndWait(node);
-
-    // Registering the first user starts the connect, so the second can miss the
-    // cip:connecting that precedes its own registration. What matters is that from the
-    // point both are registered, both see the same thing.
-    a.events.length = 0;
-    b.events.length = 0;
-
     await node.disconnect();
-    await connectAndWait(node);
 
-    expect(a.events).toEqual(["cip:disconnected", "cip:connecting", "cip:connected"]);
+    expect(a.events).toEqual(["cip:connecting", "cip:connected", "cip:disconnected"]);
     expect(b.events).toEqual(a.events);
   });
 
@@ -234,20 +246,29 @@ describe("nodes sharing one endpoint", () => {
     const node = makeEndpoint();
     const user = makeUser("read1");
     node.register(user);
-    await node.disconnect();
-    user.events.length = 0;
 
-    // Nothing is up, so nothing changes. It still announces, because a repeat disconnect
-    // is how a caller asks whether it is definitely down.
     await node.disconnect();
     expect(user.events).toEqual(["cip:disconnected"]);
   });
 
-  it("connects when a user registers", async () => {
-    const node = makeEndpoint();
-    node.register(makeUser("a"));
+  it("registering with connect:false does not bring the session up", async () => {
+    const node = makeEndpoint({ autoConnect: true });
+    node.register(makeUser("switched-in"), { connect: false });
     await flush();
-    expect(node.connected).toBe(true);
+    expect(node.connected).toBe(false);
+    expect(control.created).toHaveLength(0);
+  });
+
+  it("connects on registration only when autoConnect is set", async () => {
+    const off = makeEndpoint({ autoConnect: false });
+    off.register(makeUser("a"));
+    await flush();
+    expect(off.connected).toBe(false);
+
+    const on = makeEndpoint({ autoConnect: true });
+    on.register(makeUser("a"));
+    await flush();
+    expect(on.connected).toBe(true);
   });
 
   it("disconnects when the last user is deleted, but not on a redeploy", async () => {
@@ -283,7 +304,7 @@ describe("runtime settings surviving a reconnect", () => {
   it("keeps an overridden address across an unexpected socket drop and retry", async () => {
     jest.useFakeTimers();
     try {
-      const node = makeEndpoint();
+      const node = makeEndpoint({ autoConnect: true });
       await connectAndWait(node);
       node.setOptions({ address: "10.0.0.99", slot: 3 }, false);
 
@@ -386,7 +407,7 @@ describe("dropped connections", () => {
   it("notices a socket closing and schedules a retry", async () => {
     jest.useFakeTimers();
     try {
-      const node = makeEndpoint();
+      const node = makeEndpoint({ autoConnect: true });
       const user = makeUser("read1");
       node.register(user);
       await connectAndWait(node);
@@ -423,7 +444,7 @@ describe("dropped connections", () => {
   it("does not retry after an explicit disconnect", async () => {
     jest.useFakeTimers();
     try {
-      const node = makeEndpoint();
+      const node = makeEndpoint({ autoConnect: true });
       await connectAndWait(node);
       await node.disconnect();
 

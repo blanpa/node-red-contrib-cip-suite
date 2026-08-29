@@ -78,7 +78,11 @@ module.exports = function (RED: any) {
       apply("maxRetryInterval", int, 60000);
       apply("useMicro800", bool, false);
       apply("routingPath", str, "");
+      apply("autoConnect", bool, true);
       apply("keepAlive", int, 30000);
+      // Opt-in, and deliberately not settable by a runtime override: a message must not be
+      // able to unlock the connection it is trying to change.
+      if (init) node.allowDynamic = bool(config.allowDynamic) && config.allowDynamic !== undefined;
 
       // A NaN from a non-numeric override would poison every later comparison.
       const numericDefaults: Record<string, number> = {
@@ -199,13 +203,17 @@ module.exports = function (RED: any) {
      * very first user, as the MQTT broker node does) means a node added to a live flow
      * still brings a dropped session back up.
      */
-    node.register = function (userNode: any): void {
+    node.register = function (userNode: any, opts?: { connect?: boolean }): void {
       node._users.add(userNode);
       if (node.connected) {
         userNode.emit("cip:connected");
         return;
       }
-      if (!node.connecting && !node._closing) {
+      // `connect: false` registers interest without bringing the session up. A "switch"
+      // action uses it, because switching promises to re-point a node and nothing else;
+      // connecting there would make an explicit switch behave like a connect.
+      if (opts && opts.connect === false) return;
+      if (node.autoConnect && !node.connecting && !node._closing) {
         node.connect();
       }
     };
@@ -245,6 +253,8 @@ module.exports = function (RED: any) {
         slot: node.slot,
         useMicro800: node.useMicro800,
         routingPath: node.routingPath || null,
+        autoConnect: node.autoConnect,
+        allowDynamic: node.allowDynamic,
       };
     };
 
@@ -579,7 +589,7 @@ module.exports = function (RED: any) {
      * a shared outage. Setting maxRetryInterval equal to retryInterval restores a flat cadence.
      */
     node._scheduleRetry = function (): void {
-      if (node._closing) return;
+      if (node._closing || !node.autoConnect) return;
       clearTimeout(node._retryTimer!);
 
       const base = Math.min(node.retryInterval * Math.pow(2, node._attempt), node.maxRetryInterval);

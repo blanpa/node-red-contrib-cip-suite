@@ -11,6 +11,8 @@
       retryInterval: { value: 5000 },
       maxRetryInterval: { value: 60000 },
       keepAlive: { value: 30000 },
+      autoConnect: { value: true },
+      allowDynamic: { value: false },
       useMicro800: { value: false }
     },
     label: function () {
@@ -57,6 +59,16 @@
     <input type="number" id="node-config-input-keepAlive" placeholder="30000" />
   </div>
   <div class="form-row form-row-130">
+    <label for="node-config-input-autoConnect"><i class="fa fa-play-circle"></i> Auto connect</label>
+    <input type="checkbox" id="node-config-input-autoConnect" style="width:auto" />
+    <span>Connect when a node using this endpoint starts</span>
+  </div>
+  <div class="form-row form-row-130">
+    <label for="node-config-input-allowDynamic"><i class="fa fa-random"></i> Dynamic Control</label>
+    <input type="checkbox" id="node-config-input-allowDynamic" style="width:auto" />
+    <span>Allow <code>msg.action</code> and <code>msg.endpoint</code> to control this connection</span>
+  </div>
+  <div class="form-row form-row-130">
     <label for="node-config-input-useMicro800"><i class="fa fa-cog"></i> Micro800 Mode</label>
     <input type="checkbox" id="node-config-input-useMicro800" style="width:auto" />
     <span>Enable for Micro800 series (no slot routing)</span>
@@ -98,10 +110,88 @@
     <dt>Keepalive (ms)<span class="property-type">number</span></dt>
     <dd>Interval between Identity object reads that hold the session open. Controllers close
     idle sessions: a Micro850 does so after 120 seconds. 0 disables.</dd>
+    <dt>Auto connect <span class="property-type">boolean</span></dt>
+    <dd>Connect as soon as a node using this endpoint starts. Turn it off to leave the
+    session idle until an explicit <code>connect</code> action arrives.</dd>
+    <dt>Dynamic control<span class="property-type">boolean</span></dt>
+    <dd>Opt in to permit runtime control of the endpoint. While it is off, <code>msg.action</code> and
+    <code>msg.endpoint</code> are ignored by every node using this endpoint.</dd>
     <dt>Micro800 Mode <span class="property-type">boolean</span></dt>
     <dd>Required for Micro820/850/870. They reject the connected messaging (ForwardOpen)
     used by Logix controllers, so this switches to unconnected UCMM messaging. A CIP status
     <code>0x01</code> on connect usually means this needs enabling.</dd>
   </dl>
 
+  <h3>Dynamic control</h3>
+  <p>With <b>Dynamic</b> option enabled, any node using this endpoint can select,
+  re-point and control the connection from the message stream. A message carrying
+  <code>msg.action</code> performs that action and does <b>no</b> PLC I/O, so a
+  <code>cip-read</code> given an action does not read.</p>
+
+  <p>Important distinction:</p>
+  <ul>
+    <li>The <code>"switch"</code> action affects <b>one node</b>. It changes which endpoint that node
+    uses. Other nodes are unaffected.</li>
+    <li>All other dynamic control (connecting, disconnecting, reconnecting, modifying) affects
+    <b>the endpoint</b> and every node that uses it.</li>
+  </ul>
+
+  <h4>Actions</h4>
+  <dl class="message-properties">
+    <dt>action <span class="property-type">string</span></dt>
+    <dd><code>"switch"</code> re-points the receiving node at the endpoint named in
+    <code>msg.endpoint</code>, without connecting or disconnecting anything.<br/>
+    <code>"connect"</code> connects. Already connected with no override is a no-op
+    success.<br/>
+    <code>"disconnect"</code> disconnects and stops retrying until told otherwise.<br/>
+    <code>"reconnect"</code> forces a disconnect then connect. Also refreshes the tag
+    list.<br/>
+    <code>"status"</code> emits connection state and metrics, including the
+    <code>id</code> and <code>name</code> of the endpoint that answered.</dd>
+  </dl>
+
+  <h4>Choosing an endpoint</h4>
+  <p>Naming an endpoint always says <i>which endpoint this message is about</i>. Whether the
+  node then remains set to that endpoint follows depends on the following:</p>
+  <ul>
+    <li><code>switch</code>, <code>connect</code> and <code>reconnect</code> all re-point the node when
+    the endpoint name is specified.</li>
+    <li><code>disconnect</code> and <code>status</code> act on the current/active or named endpoint and
+    leave the node associated with its currently active endpoint.</li>
+  </ul>
+  <dl class="message-properties">
+    <dt class="optional">endpoint <span class="property-type">string</span></dt>
+    <dd>The id, or the configured <b>Name</b>, of a deployed <code>cip-endpoint</code>. Both
+    the current endpoint and the one being assigned must allow dynamic updates. A name
+    matching more than one endpoint is an error.</dd>
+    <dt class="optional">endpoint <span class="property-type">object</span></dt>
+    <dd>With <code>target: "config"</code>, changes this endpoint's settings in place:
+    <code>address</code>, <code>port</code>, <code>slot</code>, <code>connTimeout</code>,
+    <code>retryInterval</code>, <code>maxRetryInterval</code>, <code>keepAlive</code>,
+    <code>useMicro800</code>, <code>routingPath</code>. Only the properties you supply
+    change. Requires <code>msg.action = "connect"</code>, since connecting is the only
+    time new settings are applied. Sent with any other action, it is rejected
+    rather than silently dropped. On a live connection it is refused unless you add
+    <code>force: true</code> (force cycles the connection).</dd>
+  </dl>
+
+  <p>An endpoint you switch away from is left connected. Nothing disconnects it until the
+  flow stops or it is sent a <code>"disconnect"</code>. Runtime changes are not saved: a
+  full deploy restores whatever is configured here.</p>
+
+  <h4>Examples</h4>
+  <pre>// Read a tag from a different endpoint than the one configured on this node
+msg.endpoint = "PLC2";
+msg.tagName = "Line1.Speed";
+// Switch this node to a different endpoint for all future messages
+msg.action = "switch";
+msg.endpoint = "PLC2";
+// Get the connection status of the endpoint this node is using
+msg.action = "status";
+// Get the connection status of the config endpoint named "PLC2"
+msg.action = "status";
+msg.endpoint = "PLC2";
+// Alter the address of the config endpoint named "PLC2" and reconnect (affects all nodes using it)
+msg.action = "connect";
+msg.endpoint = { target: "config", address: "10.0.0.5", force: true };</pre>
 </script>

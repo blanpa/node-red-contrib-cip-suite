@@ -271,14 +271,16 @@ function toCipError(err, prefix) {
  * Standard Node-RED status objects.
  */
 exports.STATUS = {
-    connected() {
-        return { fill: "green", shape: "dot", text: "connected" };
+    // `via` names the endpoint in use. Worth showing whenever a node can be re-pointed at
+    // runtime, since "connected" alone does not say what it is connected to.
+    connected(via) {
+        return { fill: "green", shape: "dot", text: via ? `connected: ${via}` : "connected" };
     },
-    connecting() {
-        return { fill: "yellow", shape: "ring", text: "connecting..." };
+    connecting(via) {
+        return { fill: "yellow", shape: "ring", text: via ? `connecting: ${via}` : "connecting..." };
     },
-    disconnected() {
-        return { fill: "red", shape: "ring", text: "disconnected" };
+    disconnected(via) {
+        return { fill: "red", shape: "ring", text: via ? `disconnected: ${via}` : "disconnected" };
     },
     error(msg) {
         return { fill: "red", shape: "dot", text: msg };
