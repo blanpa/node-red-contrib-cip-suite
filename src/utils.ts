@@ -276,6 +276,53 @@ export function cipTypeName(code: number): string {
 }
 
 /**
+ * Render whatever st-ethernet-ip threw as readable text.
+ *
+ * The library rejects a failed connect with a bare object such as
+ * `{ generalStatusCode: 1, extendedStatus: [273] }`, so reading `.message` off it yields
+ * "undefined" and the real cause is lost.
+ */
+export function describeCipError(err: any): string {
+  if (err === null || err === undefined) return "unknown error";
+  if (typeof err === "string") return err;
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err.message === "string" && err.message) return err.message;
+
+  if (typeof err.generalStatusCode === "number") {
+    const hex = (n: number, w: number) => "0x" + n.toString(16).padStart(w, "0");
+    const ext =
+      Array.isArray(err.extendedStatus) && err.extendedStatus.length > 0
+        ? `, extended ${err.extendedStatus.map((e: number) => hex(e, 4)).join(", ")}`
+        : "";
+    return `${cipStatusText(err.generalStatusCode)} (CIP ${hex(err.generalStatusCode, 2)}${ext})`;
+  }
+
+  try {
+    const json = JSON.stringify(err);
+    if (json && json !== "{}") return json;
+  } catch {
+    // fall through
+  }
+  return String(err);
+}
+
+/**
+ * Turn any thrown value into a real Error, so callers can pass it to done() and Catch
+ * nodes see a usable message.
+ */
+export function toCipError(err: any, prefix?: string): Error {
+  const text = describeCipError(err);
+  const wrapped = new Error(prefix ? `${prefix}: ${text}` : text);
+  if (err && typeof err === "object") {
+    if (typeof err.generalStatusCode === "number") {
+      (wrapped as any).generalStatusCode = err.generalStatusCode;
+    }
+    if (err.extendedStatus !== undefined) (wrapped as any).extendedStatus = err.extendedStatus;
+  }
+  return wrapped;
+}
+
+/**
  * Standard Node-RED status objects.
  */
 export const STATUS = {

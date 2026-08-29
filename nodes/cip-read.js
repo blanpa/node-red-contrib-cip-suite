@@ -324,8 +324,8 @@ module.exports = function (RED) {
                 node.send(msg);
             }
             catch (err) {
-                node.status({ fill: "red", shape: "ring", text: err.message });
-                node.error(`Read failed: ${err.message}`, triggerMsg || {});
+                node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
+                node.error((0, utils_1.toCipError)(err, "Read failed").message, triggerMsg || {});
             }
             finally {
                 node._reading = false;

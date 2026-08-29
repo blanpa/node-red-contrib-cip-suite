@@ -16,6 +16,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const types_1 = require("./types");
 const utils_1 = require("./utils");
 const { Controller } = require("st-ethernet-ip");
+/** CIP general status 0x01, which is how a refused ForwardOpen surfaces. */
+const CIP_CONNECTION_FAILURE = 0x01;
 /** Controller run mode constants for Set_Attribute_Single (class 0x01, attr 5) */
 const CONTROLLER_MODE = {
     run: 0x0001,
@@ -26,19 +28,88 @@ module.exports = function (RED) {
     function CipEndpointNode(config) {
         RED.nodes.createNode(this, config);
         const node = this;
-        node.address = config.address;
-        node.port = parseInt(config.port, 10) || 44818;
-        node.slot = parseInt(config.slot, 10) || 0;
-        node.connTimeout = parseInt(config.connTimeout, 10) || 5000;
-        node.retryInterval = parseInt(config.retryInterval, 10) || 5000;
-        node.useMicro800 = config.useMicro800 || false;
-        node.routingPath = config.routingPath || "";
+        /**
+         * Apply connection options.
+         *
+         * With `init` set every option is applied, defaulted from the flow config. Without it
+         * only the properties actually present on `opts` are copied, so a runtime override such
+         * as `{ slot: 2 }` changes the slot alone. This mirrors the MQTT broker node's
+         * setOptions/setIfHasProperty behaviour.
+         *
+         * Returns the names of the options whose value actually changed, so a caller can decide
+         * whether a reconnect is warranted.
+         */
+        node.setOptions = function (opts, init) {
+            if (!opts || typeof opts !== "object")
+                return [];
+            const changed = [];
+            const apply = (prop, coerce, fallback) => {
+                const present = Object.prototype.hasOwnProperty.call(opts, prop);
+                if (!init && !present)
+                    return;
+                const raw = present ? opts[prop] : undefined;
+                const next = raw === undefined || raw === null || raw === "" ? fallback : coerce(raw);
+                if (node[prop] !== next) {
+                    node[prop] = next;
+                    changed.push(prop);
+                }
+            };
+            const int = (v) => parseInt(v, 10);
+            const str = (v) => String(v);
+            // Tolerate the string "false", which is how a Node-RED checkbox can arrive.
+            const bool = (v) => v !== false && v !== "false";
+            apply("address", str, "");
+            apply("port", int, 44818);
+            apply("slot", int, 0);
+            apply("connTimeout", int, 5000);
+            apply("retryInterval", int, 5000);
+            apply("maxRetryInterval", int, 60000);
+            apply("useMicro800", bool, false);
+            apply("routingPath", str, "");
+            apply("autoConnect", bool, true);
+            apply("keepAlive", int, 30000);
+            // A NaN from a non-numeric override would poison every later comparison.
+            const numericDefaults = {
+                port: 44818,
+                slot: 0,
+                connTimeout: 5000,
+                retryInterval: 5000,
+                maxRetryInterval: 60000,
+                keepAlive: 30000,
+            };
+            for (const p of Object.keys(numericDefaults)) {
+                if (typeof node[p] !== "number" || isNaN(node[p]))
+                    node[p] = numericDefaults[p];
+            }
+            if (node.keepAlive < 0)
+                node.keepAlive = 0;
+            if (node.maxRetryInterval < node.retryInterval)
+                node.maxRetryInterval = node.retryInterval;
+            return changed;
+        };
+        node.setOptions(config, true);
         node.plc = null;
         node.connected = false;
         node.connecting = false;
         node._retryTimer = null;
         node._closing = false;
         node._users = new Set();
+        /** Set by an explicit disconnect() so a pending connect or retry does not undo it. */
+        node._manualDisconnect = false;
+        /** Callbacks waiting for the current connect attempt to settle. */
+        node._connectWaiters = [];
+        /** Consecutive failed attempts, for backoff. Reset on success. */
+        node._attempt = 0;
+        /**
+         * Incremented for every connect attempt and by every disconnect. A late callback from
+         * a superseded attempt compares against it and bows out, instead of tearing down the
+         * attempt that replaced it.
+         */
+        node._attemptId = 0;
+        /** Socket listeners we added, so repeated connect cycles neither leak nor clobber. */
+        node._plcListeners = [];
+        /** Keepalive timer, running only while connected. */
+        node._keepAliveTimer = null;
         // Connection metrics
         node.metrics = {
             connected: false,
@@ -105,19 +176,118 @@ module.exports = function (RED) {
             return Buffer.concat(segments);
         }
         /**
-         * Register a user node so it receives connection events.
+         * Register a user node so it receives connection events, connecting on demand.
+         *
+         * Connecting whenever a user registers while disconnected (rather than only for the
+         * very first user, as the MQTT broker node does) means a node added to a live flow
+         * still brings a dropped session back up.
          */
-        node.register = function (userNode) {
+        node.register = function (userNode, opts) {
             node._users.add(userNode);
             if (node.connected) {
                 userNode.emit("cip:connected");
+                return;
+            }
+            // `connect: false` registers interest without bringing the session up. A "switch"
+            // action uses it, because switching promises to re-point a node and nothing else;
+            // connecting there would make an explicit switch behave like a connect.
+            if (opts && opts.connect === false)
+                return;
+            if (node.autoConnect && !node.connecting && !node._closing) {
+                node.connect();
             }
         };
         /**
          * Deregister a user node.
+         *
+         * `autoDisconnect` is the `removed` flag from the caller's close handler, so the session
+         * survives a redeploy but is torn down when the last consumer is actually deleted.
          */
-        node.deregister = function (userNode) {
+        node.deregister = function (userNode, done, autoDisconnect) {
             node._users.delete(userNode);
+            if (autoDisconnect && !node._closing && (node.connected || node.connecting) && node._users.size === 0) {
+                node.disconnect(done);
+                return;
+            }
+            if (done)
+                done();
+        };
+        /** True when a connect attempt can be started. */
+        node.canConnect = function () {
+            return !node.connected && !node.connecting && !node._closing;
+        };
+        /** Connection state and metrics, for msg.action="status" and the admin route. */
+        node.getStatus = function () {
+            return {
+                // Which config node answered. Two endpoints can share an address, so the address
+                // alone does not identify the connection.
+                id: node.id,
+                name: node.name || null,
+                state: node.connected ? "connected" : node.connecting ? "connecting" : "disconnected",
+                ...node.metrics,
+                uptime: node.metrics.connectTime && node.connected ? Date.now() - node.metrics.connectTime : 0,
+                address: node.address,
+                port: node.port,
+                slot: node.slot,
+                useMicro800: node.useMicro800,
+                routingPath: node.routingPath || null,
+                autoConnect: node.autoConnect,
+            };
+        };
+        /** Settle every callback waiting on the in-flight connect attempt. */
+        node._settleConnect = function (err) {
+            const waiters = node._connectWaiters;
+            node._connectWaiters = [];
+            for (const w of waiters) {
+                try {
+                    w(err);
+                }
+                catch (e) {
+                    node.error(`connect callback threw: ${e.message}`);
+                }
+            }
+        };
+        /** Track a listener we add to the Controller so we can remove exactly those again. */
+        node._plcOn = function (event, handler) {
+            node._plcListeners.push({ event, handler });
+            if (node.plc && typeof node.plc.on === "function")
+                node.plc.on(event, handler);
+        };
+        node._plcRemoveListeners = function (target) {
+            const plc = target || node.plc;
+            for (const l of node._plcListeners) {
+                if (plc && typeof plc.removeListener === "function") {
+                    plc.removeListener(l.event, l.handler);
+                }
+            }
+            node._plcListeners = [];
+        };
+        /**
+         * Close a Controller we are done with.
+         *
+         * A failed or superseded attempt can still be holding an open TCP socket and a
+         * registered EtherNet/IP session. Dropping the reference without closing it leaks both,
+         * and controllers with a small session table (Micro800 especially) then start refusing
+         * new connections until the sessions age out.
+         */
+        node._teardownPlc = async function (plc) {
+            if (!plc)
+                return;
+            node._plcRemoveListeners(plc);
+            try {
+                if (typeof plc.disconnect === "function")
+                    await plc.disconnect();
+            }
+            catch {
+                // best effort
+            }
+            try {
+                if (typeof plc.destroy === "function")
+                    plc.destroy();
+            }
+            catch {
+                // best effort
+            }
         };
         /**
          * Broadcast an event to all registered user nodes.
@@ -128,13 +298,70 @@ module.exports = function (RED) {
             }
         };
         /**
-         * Connect to the PLC. Automatically retries on failure.
+         * The socket went away without us asking. Until this existed, a PLC that dropped off
+         * the network left `connected` true forever and no retry was ever scheduled.
          */
-        node.connect = async function () {
-            if (node._closing || node.connecting || node.connected)
+        node._onSocketGone = function (which, err) {
+            // A superseded socket finishing its close must not tear down its replacement, which
+            // is exactly what happens during a forced reconnect.
+            if (node.plc !== which) {
                 return;
+            }
+            if (node._closing)
+                return;
+            node._stopKeepAlive();
+            const wasUp = node.connected || node.connecting;
+            node._plcRemoveListeners(which);
+            node.connected = false;
+            node.connecting = false;
+            node.metrics.connected = false;
+            node.plc = null;
+            if (!wasUp)
+                return;
+            node.metrics.errorCount++;
+            node.metrics.reconnectCount++;
+            node.log(`Connection to ${node.address}:${node.port} lost${err ? ": " + err.message : ""}`);
+            node._settleConnect(err || new Error("Connection lost"));
+            node._broadcast("cip:disconnected");
+            if (!node._manualDisconnect)
+                node._scheduleRetry();
+        };
+        /**
+         * Connect to the PLC, retrying on failure.
+         *
+         * The callback fires when the attempt actually settles, not when the promise chain is
+         * set up, so a caller can report the real outcome. Concurrent callers all settle
+         * together and each callback runs at most once per attempt.
+         */
+        node.connect = async function (cb) {
+            if (typeof cb === "function")
+                node._connectWaiters.push(cb);
+            if (node._closing) {
+                node._settleConnect(new Error("Endpoint is closing"));
+                return;
+            }
+            if (node.connected) {
+                node._settleConnect(null);
+                return;
+            }
+            // Already connecting: the waiter settles with the in-flight attempt.
+            if (node.connecting)
+                return;
+            node._manualDisconnect = false;
             node.connecting = true;
+            const attempt = ++node._attemptId;
+            const isCurrent = () => node._attemptId === attempt && !node._closing;
             node._broadcast("cip:connecting");
+            // Without this a caller waiting on the callback can hang indefinitely if the
+            // underlying connect never settles. It releases the waiters only; connection state
+            // is still driven by the attempt itself.
+            const budget = Math.max(1000, node.connTimeout * 2);
+            const watchdog = setTimeout(() => {
+                if (isCurrent() && node._connectWaiters.length) {
+                    node._settleConnect(new Error(`Timed out connecting to ${node.address}:${node.port} after ${budget}ms`));
+                }
+            }, budget);
+            const onSettled = () => clearTimeout(watchdog);
             try {
                 // Micro800: unconnected messaging (no ForwardOpen)
                 // ControlLogix/CompactLogix: connected messaging
@@ -153,10 +380,23 @@ module.exports = function (RED) {
                 if (routeBuffer && node.plc) {
                     node.plc.routing = routeBuffer;
                 }
+                const thisPlc = node.plc;
                 const setupMode = !node.useMicro800;
                 node.plc
                     .connect(node.address, node.slot, setupMode)
                     .then(async () => {
+                    onSettled();
+                    // A disconnect, or a newer attempt, that landed while this one was in flight
+                    // must win. Otherwise the endpoint silently comes back up on stale settings.
+                    if (!isCurrent() || node._manualDisconnect) {
+                        await node._teardownPlc(thisPlc);
+                        if (node.plc === thisPlc) {
+                            node.plc = null;
+                            node.connecting = false;
+                            node._settleConnect(new Error("Disconnected"));
+                        }
+                        return;
+                    }
                     if (node.useMicro800) {
                         try {
                             await node.plc.getControllerTagList(node.plc.state.tagList);
@@ -167,65 +407,194 @@ module.exports = function (RED) {
                     }
                     node.connecting = false;
                     node.connected = true;
+                    node._attempt = 0;
                     node.metrics.connected = true;
                     node.metrics.connectTime = Date.now();
                     _responseTimes = [];
+                    node._watchSocket(thisPlc);
+                    node._startKeepAlive();
                     node.log(`Connected to ${node.address}:${node.port} slot ${node.slot}${node.useMicro800 ? " (Micro800)" : ""}${node.routingPath ? " routing=" + node.routingPath : ""}`);
+                    node._settleConnect(null);
                     node._broadcast("cip:connected");
                 })
                     .catch((err) => {
-                    node.connecting = false;
-                    node.connected = false;
-                    node.metrics.connected = false;
-                    node.metrics.errorCount++;
-                    node.metrics.reconnectCount++;
-                    node.error(`Connection failed: ${err.message}`);
-                    node._broadcast("cip:error", err);
-                    node._scheduleRetry();
+                    onSettled();
+                    // A superseded attempt failing must not tear down the one that replaced it.
+                    if (!isCurrent()) {
+                        node._teardownPlc(thisPlc);
+                        return;
+                    }
+                    node._onConnectFailed(err, thisPlc);
                 });
             }
             catch (err) {
-                node.connecting = false;
-                node.connected = false;
-                node.metrics.connected = false;
-                node.metrics.errorCount++;
-                node.metrics.reconnectCount++;
-                node.error(`Connection failed: ${err.message}`);
-                node._broadcast("cip:error", err);
+                onSettled();
+                if (!isCurrent())
+                    return;
+                node._onConnectFailed(err, node.plc);
+            }
+        };
+        node._onConnectFailed = function (raw, plc) {
+            node._stopKeepAlive();
+            // Close the failed Controller rather than just dropping it: it may still hold an
+            // open socket and a registered session on the PLC.
+            node._teardownPlc(plc || node.plc);
+            node.connecting = false;
+            node.connected = false;
+            node.metrics.connected = false;
+            node.metrics.errorCount++;
+            node.metrics.reconnectCount++;
+            node._plcRemoveListeners();
+            node.plc = null;
+            const err = (0, utils_1.toCipError)(raw, "Connection failed");
+            // Connected messaging opens a Class 3 connection with ForwardOpen, which Micro800
+            // controllers refuse outright. Without this the user only sees a bare CIP status.
+            if (!node.useMicro800 && raw && raw.generalStatusCode === CIP_CONNECTION_FAILURE) {
+                err.message +=
+                    '. If this is a Micro800 series controller (Micro820/850/870), enable "Micro800 Mode" ' +
+                        "on the endpoint: they do not support the connected messaging this uses.";
+            }
+            node.error(err.message);
+            node._settleConnect(err);
+            node._broadcast("cip:error", err);
+            if (!node._manualDisconnect)
                 node._scheduleRetry();
+        };
+        /**
+         * Send a minimal CIP request purely to keep the session alive.
+         *
+         * Controllers close an idle EtherNet/IP session after an inactivity timeout: a
+         * Micro850 does so after exactly 120 seconds. Without traffic the session dies, and
+         * although the drop is now detected and retried, every read landing in the reconnect
+         * window still fails. Get_Attribute_Single on the Identity object is the cheapest
+         * request every CIP device is required to answer.
+         */
+        node._sendKeepAlive = function () {
+            const plc = node.plc;
+            if (!plc)
+                return Promise.reject(new Error("Not connected"));
+            const path = Buffer.from([0x20, types_1.CIPClass.IDENTITY, 0x24, 0x01, 0x30, 0x01]);
+            const reqBuf = Buffer.alloc(2 + path.length);
+            reqBuf.writeUInt8(types_1.CIPService.GET_ATTRIBUTE_SINGLE, 0);
+            reqBuf.writeUInt8(path.length / 2, 1);
+            path.copy(reqBuf, 2);
+            return new Promise((resolve, reject) => {
+                let settled = false;
+                // write_cip does not always call back on a dead socket, so bound the wait.
+                const timer = setTimeout(() => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    reject(new Error("Keepalive timed out"));
+                }, Math.max(1000, node.connTimeout));
+                try {
+                    plc.write_cip(reqBuf, false, 10, (err) => {
+                        if (settled)
+                            return;
+                        settled = true;
+                        clearTimeout(timer);
+                        err ? reject((0, utils_1.toCipError)(err, "Keepalive failed")) : resolve();
+                    });
+                }
+                catch (err) {
+                    if (settled)
+                        return;
+                    settled = true;
+                    clearTimeout(timer);
+                    reject((0, utils_1.toCipError)(err, "Keepalive failed"));
+                }
+            });
+        };
+        node._startKeepAlive = function () {
+            node._stopKeepAlive();
+            if (!node.keepAlive || node.keepAlive <= 0)
+                return;
+            node._keepAliveTimer = setInterval(() => {
+                if (!node.connected || !node.plc)
+                    return;
+                const plc = node.plc;
+                node._sendKeepAlive().catch((err) => {
+                    // Only react if this is still the socket we pinged.
+                    if (node.plc !== plc)
+                        return;
+                    node._onSocketGone(plc, err);
+                });
+            }, node.keepAlive);
+        };
+        node._stopKeepAlive = function () {
+            if (node._keepAliveTimer) {
+                clearInterval(node._keepAliveTimer);
+                node._keepAliveTimer = null;
             }
         };
         /**
-         * Schedule a reconnect attempt after retryInterval ms.
+         * Watch the live socket so an unexpected drop is noticed.
+         *
+         * Controller extends ENIP extends net.Socket, and ENIP already attaches its own error
+         * handler during connect, so adding ours cannot make an error throw.
+         */
+        node._watchSocket = function (plc) {
+            if (!plc || typeof plc.on !== "function")
+                return;
+            node._plcRemoveListeners(plc);
+            if (typeof plc.setMaxListeners === "function")
+                plc.setMaxListeners(0);
+            if (typeof plc.setKeepAlive === "function") {
+                plc.setKeepAlive(true, Math.max(1000, node.connTimeout));
+            }
+            node._plcOn("close", () => node._onSocketGone(plc));
+            node._plcOn("end", () => node._onSocketGone(plc));
+            node._plcOn("error", (err) => node._onSocketGone(plc, err));
+        };
+        /**
+         * Schedule a reconnect, backing off exponentially up to maxRetryInterval.
+         *
+         * Jitter stops a rack of nodes pointed at the same PLC from retrying in lockstep after
+         * a shared outage. Setting maxRetryInterval equal to retryInterval restores a flat cadence.
          */
         node._scheduleRetry = function () {
-            if (node._closing)
+            if (node._closing || !node.autoConnect)
                 return;
             clearTimeout(node._retryTimer);
+            const base = Math.min(node.retryInterval * Math.pow(2, node._attempt), node.maxRetryInterval);
+            const delay = Math.round(base * (0.85 + Math.random() * 0.3));
+            node._attempt = Math.min(node._attempt + 1, 16);
             node._retryTimer = setTimeout(() => {
-                if (!node._closing) {
+                if (!node._closing && !node._manualDisconnect)
                     node.connect();
-                }
-            }, node.retryInterval);
+            }, delay);
         };
         /**
-         * Disconnect from the PLC.
+         * Disconnect from the PLC and stop retrying until told otherwise.
+         *
+         * Broadcasts cip:disconnected, which the original did not, so user nodes no longer sit
+         * on a stale green status after an explicit disconnect.
          */
-        node.disconnect = async function () {
+        node.disconnect = async function (cb) {
+            node._manualDisconnect = true;
+            node._attempt = 0;
+            // Abandon any attempt still in flight so its callbacks cannot resurrect us.
+            node._attemptId++;
+            node._stopKeepAlive();
             clearTimeout(node._retryTimer);
             node._retryTimer = null;
-            if (node.plc) {
-                try {
-                    await node.plc.disconnect();
-                }
-                catch (_) {
-                    // ignore disconnect errors during cleanup
-                }
-            }
+            const wasUp = node.connected || node.connecting;
+            const plc = node.plc;
+            // Drop our listeners first so the teardown does not re-enter via _onSocketGone.
+            node._plcRemoveListeners(plc);
             node.connected = false;
             node.connecting = false;
             node.metrics.connected = false;
             node.plc = null;
+            await node._teardownPlc(plc);
+            node._settleConnect(new Error("Disconnected"));
+            // Broadcast even when nothing was up. A redundant disconnect is how a user asks
+            // "are we definitely down?", and staying silent leaves any stale display uncorrected.
+            void wasUp;
+            if (!node._closing)
+                node._broadcast("cip:disconnected");
+            if (cb)
+                cb();
         };
         /**
          * Read a tag value from the PLC with metrics tracking.
@@ -429,14 +798,6 @@ module.exports = function (RED) {
         node.getController = function () {
             return node.plc;
         };
-        // Auto-connect when at least one user registers
-        const origRegister = node.register;
-        node.register = function (userNode) {
-            origRegister(userNode);
-            if (!node.connected && !node.connecting) {
-                node.connect();
-            }
-        };
         node.on("close", async function (done) {
             node._closing = true;
             node._broadcast("cip:disconnected");
@@ -449,7 +810,7 @@ module.exports = function (RED) {
      * Admin HTTP endpoint: browse tags from a deployed cip-endpoint node.
      * GET /cip-endpoint/:id/browse
      */
-    RED.httpAdmin.get("/cip-endpoint/:id/browse", async function (req, res) {
+    RED.httpAdmin.get("/cip-endpoint/:id/browse", RED.auth.needsPermission("cip-endpoint.read"), async function (req, res) {
         const node = RED.nodes.getNode(req.params.id);
         if (!node) {
             return res.status(404).json({ error: "Endpoint node not found. Deploy the flow first." });
@@ -475,24 +836,14 @@ module.exports = function (RED) {
      * Admin HTTP endpoint: connection metrics.
      * GET /cip-endpoint/:id/metrics
      */
-    RED.httpAdmin.get("/cip-endpoint/:id/metrics", function (req, res) {
+    RED.httpAdmin.get("/cip-endpoint/:id/metrics", RED.auth.needsPermission("cip-endpoint.read"), function (req, res) {
         const node = RED.nodes.getNode(req.params.id);
         if (!node) {
             return res.status(404).json({ error: "Endpoint node not found. Deploy the flow first." });
         }
         try {
-            const uptime = node.metrics.connectTime && node.connected
-                ? Date.now() - node.metrics.connectTime
-                : 0;
-            res.json({
-                ...node.metrics,
-                uptime,
-                address: node.address,
-                port: node.port,
-                slot: node.slot,
-                useMicro800: node.useMicro800,
-                routingPath: node.routingPath || null,
-            });
+            // Same payload msg.action="status" returns, so the two cannot drift.
+            res.json(node.getStatus());
         }
         catch (err) {
             res.status(500).json({ error: err.message });

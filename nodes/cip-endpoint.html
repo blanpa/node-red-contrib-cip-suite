@@ -9,6 +9,9 @@
       routingPath: { value: "" },
       connTimeout: { value: 5000 },
       retryInterval: { value: 5000 },
+      maxRetryInterval: { value: 60000 },
+      keepAlive: { value: 30000 },
+      autoConnect: { value: true },
       useMicro800: { value: false }
     },
     label: function () {
@@ -18,37 +21,96 @@
 </script>
 
 <script type="text/html" data-template-name="cip-endpoint">
-  <div class="form-row">
+  <div class="form-row form-row-130">
     <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
     <input type="text" id="node-config-input-name" placeholder="Name" />
   </div>
-  <div class="form-row">
+  <div class="form-row form-row-130">
     <label for="node-config-input-address"><i class="fa fa-globe"></i> IP Address</label>
     <input type="text" id="node-config-input-address" placeholder="192.168.1.1" />
   </div>
-  <div class="form-row">
+  <div class="form-row form-row-130">
     <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
     <input type="number" id="node-config-input-port" placeholder="44818" />
   </div>
-  <div class="form-row">
+  <div class="form-row form-row-130">
     <label for="node-config-input-slot"><i class="fa fa-microchip"></i> Slot</label>
     <input type="number" id="node-config-input-slot" placeholder="0" />
   </div>
-  <div class="form-row">
+  <div class="form-row form-row-130">
     <label for="node-config-input-routingPath"><i class="fa fa-random"></i> Routing Path</label>
-    <input type="text" id="node-config-input-routingPath" placeholder="e.g. 1/2/192.168.1.1" />
+    <input type="text" id="node-config-input-routingPath" placeholder="e.g. 1/0 or 1/0/2/192.168.1.1" />
   </div>
-  <div class="form-row">
+  <div class="form-row form-row-130">
     <label for="node-config-input-connTimeout"><i class="fa fa-clock-o"></i> Timeout (ms)</label>
     <input type="number" id="node-config-input-connTimeout" placeholder="5000" />
   </div>
-  <div class="form-row">
+  <div class="form-row form-row-130">
     <label for="node-config-input-retryInterval"><i class="fa fa-refresh"></i> Retry (ms)</label>
     <input type="number" id="node-config-input-retryInterval" placeholder="5000" />
   </div>
-  <div class="form-row">
+  <div class="form-row form-row-130">
+    <label for="node-config-input-maxRetryInterval"><i class="fa fa-refresh"></i> Max retry (ms)</label>
+    <input type="number" id="node-config-input-maxRetryInterval" placeholder="60000" />
+  </div>
+  <div class="form-row form-row-130">
+    <label for="node-config-input-keepAlive"><i class="fa fa-heartbeat"></i> Keepalive (ms)</label>
+    <input type="number" id="node-config-input-keepAlive" placeholder="30000" />
+  </div>
+  <div class="form-row form-row-130">
+    <label for="node-config-input-autoConnect"><i class="fa fa-play-circle"></i> Auto connect</label>
+    <input type="checkbox" id="node-config-input-autoConnect" style="width:auto" />
+    <span>Connect when a node using this endpoint starts</span>
+  </div>
+  <div class="form-row form-row-130">
     <label for="node-config-input-useMicro800"><i class="fa fa-cog"></i> Micro800 Mode</label>
     <input type="checkbox" id="node-config-input-useMicro800" style="width:auto" />
     <span>Enable for Micro800 series (no slot routing)</span>
   </div>
+</script>
+
+<style>
+  /* The labels are too long and wrap poorly! */
+  .form-row.form-row-130 label {
+    width: 130px;
+  }
+</style>
+
+<script type="text/html" data-help-name="cip-endpoint">
+  <p>A shared EtherNet/IP session to one CIP device. Every CIP node that talks to a
+  PLC points at one of these, and they all share the single connection it owns.</p>
+
+  <h3>Settings</h3>
+  <dl class="message-properties">
+    <dt>IP Address <span class="property-type">string</span></dt>
+    <dd>Hostname or IP of the controller. The <b>Port</b> field is currently informational:
+    EtherNet/IP is always contacted on 44818.</dd>
+    <dt>Slot <span class="property-type">number</span></dt>
+    <dd>Backplane slot of the CPU. Leave at 0 for controllers with no backplane.</dd>
+    <dt>Routing Path <span class="property-type">string</span></dt>
+    <dd>CIP route to a controller reached through one or more bridge modules, written as
+    <code>port/link</code> pairs. <code>1/0</code> means backplane port 1, slot 0.
+    <code>1/0/2/192.168.1.1</code> crosses the backplane to slot 0, then leaves port 2 to a
+    second chassis at that address. An <b>even</b> number of segments is required, since
+    each hop is a pair: an odd count is ignored and no routing is applied. Leave empty for
+    a directly addressed controller.</dd>
+    <dt>Timeout (ms) <span class="property-type">number</span></dt>
+    <dd>How long a single CIP request may take before it is abandoned. Also bounds how long
+    a connect attempt waits before it reports failure.</dd>
+    <dt>Retry / Max retry (ms) <span class="property-type">number</span></dt>
+    <dd>Reconnect backoff. Doubles from <b>Retry</b> up to <b>Max retry</b>, with jitter so
+    that several endpoints recovering from one outage do not retry in lockstep. Set them
+    equal for a flat interval.</dd>
+    <dt>Keepalive (ms)<span class="property-type">number</span></dt>
+    <dd>Interval between Identity object reads that hold the session open. Controllers close
+    idle sessions: a Micro850 does so after 120 seconds. 0 disables.</dd>
+    <dt>Auto connect <span class="property-type">boolean</span></dt>
+    <dd>Connect as soon as a node using this endpoint starts. Turn it off to leave the
+    session idle until an explicit <code>connect</code> action arrives.</dd>
+    <dt>Micro800 Mode <span class="property-type">boolean</span></dt>
+    <dd>Required for Micro820/850/870. They reject the connected messaging (ForwardOpen)
+    used by Logix controllers, so this switches to unconnected UCMM messaging. A CIP status
+    <code>0x01</code> on connect usually means this needs enabling.</dd>
+  </dl>
+
 </script>

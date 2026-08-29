@@ -11,7 +11,9 @@
  */
 
 import { CIPService, CIP_STATUS } from "./types";
-import { cipStatusText, STATUS, withTiming } from "./utils";
+import { cipStatusText, STATUS, withTiming ,
+  describeCipError,
+  toCipError,} from "./utils";
 
 /** Single CIP request descriptor for Multiple Service Packet */
 interface CIPRequestDescriptor {
@@ -361,7 +363,7 @@ module.exports = function (RED: any) {
 
         node.send(msg);
       } catch (err: any) {
-        node.status({ fill: "red", shape: "ring", text: err.message });
+        node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
         msg.payload = {
           success: false,
           service: msg.service || node.service,
