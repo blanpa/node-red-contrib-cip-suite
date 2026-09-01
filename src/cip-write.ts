@@ -26,7 +26,9 @@ import {
 } from "./utils";
 import {
   DynOpts,
+  MsgEndpoint,
   handleEndpointMsg,
+  stampEndpoint,
   ensureConnected,
   endpointLabel,
   applyInitialStatus
@@ -105,9 +107,11 @@ module.exports = function (RED: any) {
     /**
      * Write a single tag with support for bit access, array elements, array ranges, and UDTs.
      */
-    async function writeSingleTag(tagName: string, value: any): Promise<WriteResult> {
+    async function writeSingleTag(tagName: string, value: any, use?: any): Promise<WriteResult> {
       const parsed = parseTagName(tagName);
-      const controller = node.endpoint.getController();
+      const endpoint = use || node.endpoint;
+      if (!endpoint) throw new Error("No endpoint selected");
+      const controller = endpoint.getController();
       if (!controller) throw new Error("Controller not available");
 
       const { Tag } = require("st-ethernet-ip");
@@ -125,7 +129,7 @@ module.exports = function (RED: any) {
         // Try atomic read-modify-write first (CIP service 0x4E)
         if (
           node.useAtomicBitWrite &&
-          typeof node.endpoint.readModifyWriteTag === "function"
+          typeof endpoint.readModifyWriteTag === "function"
         ) {
           try {
             // Need to read the tag first to determine type/size
@@ -133,7 +137,7 @@ module.exports = function (RED: any) {
             await controller.readTag(tag);
             const byteSize = getTypeByteSize(tag.type);
             const { orMask, andMask } = buildBitMasks(byteSize, parsed.bitIndex, bitValue);
-            await node.endpoint.readModifyWriteTag(parsed.baseName, orMask, andMask);
+            await endpoint.readModifyWriteTag(parsed.baseName, orMask, andMask);
             return {
               success: true,
               tagName,
@@ -263,12 +267,13 @@ module.exports = function (RED: any) {
      * Write multiple tags in batch.
      */
     async function writeBatch(
-      tags: Array<{ name: string; value: any }>
+      tags: Array<{ name: string; value: any }>,
+      use?: any
     ): Promise<WriteResult[]> {
       const results: WriteResult[] = [];
       for (const item of tags) {
         try {
-          const r = await writeSingleTag(item.name, item.value);
+          const r = await writeSingleTag(item.name, item.value, use);
           results.push(r);
         } catch (err: any) {
           results.push({
@@ -301,10 +306,14 @@ module.exports = function (RED: any) {
     });
 
     node.on("input", async function (msg: any, send: any, done: any) {
-      if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
+      // A bare msg.endpoint names the endpoint for this write only and leaves the node
+      // bound where it was, so ctx is captured before any await.
+      const ctx: MsgEndpoint = { endpoint: node.endpoint };
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN, ctx)) return;
+      const endpoint = ctx.endpoint;
 
       try {
-        await ensureConnected(node);
+        await ensureConnected(node, endpoint);
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
         done ? done(toCipError(err)) : node.error(describeCipError(err), msg);
@@ -321,7 +330,7 @@ module.exports = function (RED: any) {
         // Batch mode: msg.tags is array of {name, value}
         if (Array.isArray(msg.tags)) {
           const { result: batchResults, elapsed } = await withTiming(() =>
-            writeBatch(msg.tags)
+            writeBatch(msg.tags, endpoint)
           );
           const allOk = batchResults.every((r: WriteResult) => r.success);
           msg.payload = batchResults;
@@ -330,7 +339,7 @@ module.exports = function (RED: any) {
             shape: "dot",
             text: `${batchResults.length} tags written (${elapsed}ms)`,
           });
-          node.send(msg);
+          node.send(stampEndpoint(msg, endpoint));
           return;
         }
 
@@ -347,14 +356,14 @@ module.exports = function (RED: any) {
           return;
         }
 
-        const { result, elapsed } = await withTiming(() => writeSingleTag(tag, value));
+        const { result, elapsed } = await withTiming(() => writeSingleTag(tag, value, endpoint));
         node.status({
           fill: "green",
           shape: "dot",
           text: `${tag} written (${elapsed}ms)`,
         });
         msg.payload = result;
-        node.send(msg);
+        node.send(stampEndpoint(msg, endpoint));
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
         msg.payload = {
@@ -367,7 +376,7 @@ module.exports = function (RED: any) {
           `Write failed for ${msg.tagName || node.tagName}: ${err.message}`,
           msg
         );
-        node.send(msg);
+        node.send(stampEndpoint(msg, endpoint));
       } finally {
         node._writing = false;
       }

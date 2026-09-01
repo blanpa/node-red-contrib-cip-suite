@@ -236,10 +236,14 @@ module.exports = function (RED) {
             node.status(utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
         });
         node.on("input", async function (msg, send, done) {
-            if ((0, endpoint_dynamic_1.handleEndpointMsg)(RED, node, msg, send, done, DYN))
+            // A bare msg.endpoint names the endpoint for this request only and leaves the node
+            // bound where it was, so ctx is captured before any await.
+            const ctx = { endpoint: node.endpoint };
+            if ((0, endpoint_dynamic_1.handleEndpointMsg)(RED, node, msg, send, done, DYN, ctx))
                 return;
+            const endpoint = ctx.endpoint;
             try {
-                await (0, endpoint_dynamic_1.ensureConnected)(node);
+                await (0, endpoint_dynamic_1.ensureConnected)(node, endpoint);
             }
             catch (err) {
                 node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
@@ -253,7 +257,7 @@ module.exports = function (RED) {
             node._busy = true;
             node.status({ fill: "yellow", shape: "dot", text: "sending..." });
             try {
-                const controller = node.endpoint.getController();
+                const controller = endpoint.getController();
                 if (!controller) {
                     throw new Error("Controller not available");
                 }
@@ -283,7 +287,7 @@ module.exports = function (RED) {
                         shape: "dot",
                         text: `${responses.length} responses (${elapsed}ms)`,
                     });
-                    node.send(msg);
+                    node.send((0, endpoint_dynamic_1.stampEndpoint)(msg, endpoint));
                     return;
                 }
                 // Single service mode
@@ -329,7 +333,7 @@ module.exports = function (RED) {
                         text: parsed.statusText,
                     });
                 }
-                node.send(msg);
+                node.send((0, endpoint_dynamic_1.stampEndpoint)(msg, endpoint));
             }
             catch (err) {
                 node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
@@ -344,7 +348,7 @@ module.exports = function (RED) {
                     timestamp: Date.now(),
                 };
                 node.error(`Raw CIP request failed: ${err.message}`, msg);
-                node.send(msg);
+                node.send((0, endpoint_dynamic_1.stampEndpoint)(msg, endpoint));
             }
             finally {
                 node._busy = false;

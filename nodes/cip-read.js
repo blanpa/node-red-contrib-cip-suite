@@ -96,11 +96,12 @@ module.exports = function (RED) {
         /**
          * Read a single tag with support for bit access, array elements, array ranges, and UDTs.
          */
-        async function readSingleTag(tagName, options = {}) {
+        async function readSingleTag(tagName, options = {}, use) {
             const parsed = (0, utils_1.parseTagName)(tagName);
-            if (!node.endpoint)
+            const endpoint = use || node.endpoint;
+            if (!endpoint)
                 throw new Error("No endpoint selected");
-            const controller = node.endpoint.getController();
+            const controller = endpoint.getController();
             if (!controller)
                 throw new Error("Controller not available");
             const effectiveDataType = options.dataType ?? node.dataType;
@@ -214,10 +215,11 @@ module.exports = function (RED) {
         /**
          * Read multiple tags using TagGroup for batch efficiency.
          */
-        async function readBatch(tags) {
-            if (!node.endpoint)
+        async function readBatch(tags, use) {
+            const endpoint = use || node.endpoint;
+            if (!endpoint)
                 throw new Error("No endpoint selected");
-            const controller = node.endpoint.getController();
+            const controller = endpoint.getController();
             if (!controller)
                 throw new Error("Controller not available");
             const { Tag, TagGroup } = require("st-ethernet-ip");
@@ -258,7 +260,7 @@ module.exports = function (RED) {
             for (const item of tagObjects) {
                 if (item.individual) {
                     try {
-                        const r = await readSingleTag(item.name);
+                        const r = await readSingleTag(item.name, {}, endpoint);
                         results.push({
                             tagName: item.name,
                             value: r.value,
@@ -287,7 +289,9 @@ module.exports = function (RED) {
         /**
          * Read the configured tag and send the result.
          */
-        async function doRead(triggerMsg, done) {
+        async function doRead(triggerMsg, done, use) {
+            // The endpoint for this read alone. Polling passes none and uses the node's own.
+            const endpoint = use || node.endpoint;
             // Errors reach done() so a Catch node can see them. Polling passes no done, so its
             // failures still surface through node.error as before.
             const settle = (err) => {
@@ -299,12 +303,7 @@ module.exports = function (RED) {
                 }
             };
             /** Which PLC answered. Only stamped when the endpoint opts in, so static output is unchanged. */
-            const stamp = (msg) => {
-                if (node.endpoint && node.endpoint.allowDynamic) {
-                    msg.endpoint = node.endpoint.name || node.endpoint.id;
-                }
-                return msg;
-            };
+            const stamp = (msg) => (0, endpoint_dynamic_1.stampEndpoint)(msg, endpoint);
             if (node._reading) {
                 settle();
                 return;
@@ -312,7 +311,7 @@ module.exports = function (RED) {
             node._reading = true;
             try {
                 if (triggerMsg && Array.isArray(triggerMsg.tags)) {
-                    const { result: batchResult, elapsed } = await (0, utils_1.withTiming)(() => readBatch(triggerMsg.tags));
+                    const { result: batchResult, elapsed } = await (0, utils_1.withTiming)(() => readBatch(triggerMsg.tags, endpoint));
                     const msg = {
                         payload: batchResult,
                         timestamp: Date.now(),
@@ -340,7 +339,7 @@ module.exports = function (RED) {
                         ? parseInt(String(triggerMsg.arraySize), 10)
                         : undefined,
                 };
-                const { result, elapsed } = await (0, utils_1.withTiming)(() => readSingleTag(tag, readOptions));
+                const { result, elapsed } = await (0, utils_1.withTiming)(() => readSingleTag(tag, readOptions, endpoint));
                 const msg = {
                     payload: result.value,
                     tagName: tag,
@@ -412,16 +411,20 @@ module.exports = function (RED) {
             stopPolling();
         });
         node.on("input", function (msg, send, done) {
-            if ((0, endpoint_dynamic_1.handleEndpointMsg)(RED, node, msg, send, done, DYN))
+            // A bare msg.endpoint names the endpoint for this read only and leaves the node
+            // bound where it was, so ctx is captured before any await.
+            const ctx = { endpoint: node.endpoint };
+            if ((0, endpoint_dynamic_1.handleEndpointMsg)(RED, node, msg, send, done, DYN, ctx))
                 return;
-            if (!node.endpoint) {
+            const endpoint = ctx.endpoint;
+            if (!endpoint) {
                 node.status({ fill: "red", shape: "ring", text: "no endpoint" });
                 const err = new Error("No endpoint selected");
                 done ? done((0, utils_1.toCipError)(err)) : node.error((0, utils_1.describeCipError)(err), msg);
                 return;
             }
-            (0, endpoint_dynamic_1.ensureConnected)(node)
-                .then(() => doRead(msg, done))
+            (0, endpoint_dynamic_1.ensureConnected)(node, endpoint)
+                .then(() => doRead(msg, done, endpoint))
                 .catch((err) => {
                 node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
                 done ? done((0, utils_1.toCipError)(err)) : node.error((0, utils_1.describeCipError)(err), msg);

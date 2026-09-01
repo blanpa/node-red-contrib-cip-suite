@@ -28,7 +28,9 @@ import {
 import { ArraySizeCache, resolveArrayLength } from "./tag-array";
 import {
   DynOpts,
+  MsgEndpoint,
   handleEndpointMsg,
+  stampEndpoint,
   ensureConnected,
   endpointLabel,
   applyInitialStatus,
@@ -130,11 +132,13 @@ module.exports = function (RED: any) {
      */
     async function readSingleTag(
       tagName: string,
-      options: { dataType?: string; arraySize?: number } = {}
+      options: { dataType?: string; arraySize?: number } = {},
+      use?: any
     ): Promise<{ value: any; type: string; bitIndex?: number; arrayIndex?: number }> {
       const parsed = parseTagName(tagName);
-      if (!node.endpoint) throw new Error("No endpoint selected");
-      const controller = node.endpoint.getController();
+      const endpoint = use || node.endpoint;
+      if (!endpoint) throw new Error("No endpoint selected");
+      const controller = endpoint.getController();
       if (!controller) throw new Error("Controller not available");
 
       const effectiveDataType = options.dataType ?? node.dataType;
@@ -276,10 +280,12 @@ module.exports = function (RED: any) {
      * Read multiple tags using TagGroup for batch efficiency.
      */
     async function readBatch(
-      tags: string[]
+      tags: string[],
+      use?: any
     ): Promise<MultiTagResult[]> {
-      if (!node.endpoint) throw new Error("No endpoint selected");
-      const controller = node.endpoint.getController();
+      const endpoint = use || node.endpoint;
+      if (!endpoint) throw new Error("No endpoint selected");
+      const controller = endpoint.getController();
       if (!controller) throw new Error("Controller not available");
 
       const { Tag, TagGroup } = require("st-ethernet-ip");
@@ -325,7 +331,7 @@ module.exports = function (RED: any) {
       for (const item of tagObjects) {
         if (item.individual) {
           try {
-            const r = await readSingleTag(item.name);
+            const r = await readSingleTag(item.name, {}, endpoint);
             results.push({
               tagName: item.name,
               value: r.value,
@@ -353,7 +359,9 @@ module.exports = function (RED: any) {
     /**
      * Read the configured tag and send the result.
      */
-    async function doRead(triggerMsg?: any, done?: any): Promise<void> {
+    async function doRead(triggerMsg?: any, done?: any, use?: any): Promise<void> {
+      // The endpoint for this read alone. Polling passes none and uses the node's own.
+      const endpoint = use || node.endpoint;
       // Errors reach done() so a Catch node can see them. Polling passes no done, so its
       // failures still surface through node.error as before.
       const settle = (err?: Error): void => {
@@ -364,12 +372,7 @@ module.exports = function (RED: any) {
         }
       };
       /** Which PLC answered. Only stamped when the endpoint opts in, so static output is unchanged. */
-      const stamp = (msg: any): any => {
-        if (node.endpoint && node.endpoint.allowDynamic) {
-          msg.endpoint = node.endpoint.name || node.endpoint.id;
-        }
-        return msg;
-      };
+      const stamp = (msg: any): any => stampEndpoint(msg, endpoint);
 
       if (node._reading) {
         settle();
@@ -380,7 +383,7 @@ module.exports = function (RED: any) {
       try {
         if (triggerMsg && Array.isArray(triggerMsg.tags)) {
           const { result: batchResult, elapsed } = await withTiming(() =>
-            readBatch(triggerMsg.tags)
+            readBatch(triggerMsg.tags, endpoint)
           );
           const msg: any = {
             payload: batchResult,
@@ -414,7 +417,9 @@ module.exports = function (RED: any) {
         };
 
 
-        const { result, elapsed } = await withTiming(() => readSingleTag(tag, readOptions));
+        const { result, elapsed } = await withTiming(() =>
+          readSingleTag(tag, readOptions, endpoint)
+        );
 
         const msg: any = {
           payload: result.value,
@@ -494,17 +499,21 @@ module.exports = function (RED: any) {
     });
 
     node.on("input", function (msg: any, send: any, done: any) {
-      if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
+      // A bare msg.endpoint names the endpoint for this read only and leaves the node
+      // bound where it was, so ctx is captured before any await.
+      const ctx: MsgEndpoint = { endpoint: node.endpoint };
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN, ctx)) return;
+      const endpoint = ctx.endpoint;
 
-      if (!node.endpoint) {
+      if (!endpoint) {
         node.status({ fill: "red", shape: "ring", text: "no endpoint" });
         const err = new Error("No endpoint selected");
         done ? done(toCipError(err)) : node.error(describeCipError(err), msg);
         return;
       }
 
-      ensureConnected(node)
-        .then(() => doRead(msg, done))
+      ensureConnected(node, endpoint)
+        .then(() => doRead(msg, done, endpoint))
         .catch((err: Error) => {
           node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
           done ? done(toCipError(err)) : node.error(describeCipError(err), msg);

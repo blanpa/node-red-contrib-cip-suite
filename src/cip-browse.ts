@@ -14,7 +14,9 @@ import { CIPDataType, TagInfo } from "./types";
 import { cipTypeName, STATUS, describeCipError, toCipError } from "./utils";
 import {
   DynOpts,
+  MsgEndpoint,
   handleEndpointMsg,
+  stampEndpoint,
   ensureConnected,
   endpointLabel,
   applyInitialStatus
@@ -145,10 +147,14 @@ module.exports = function (RED: any) {
     });
 
     node.on("input", async function (msg: any, send: any, done: any) {
-      if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
+      // A bare msg.endpoint names the endpoint for this browse only and leaves the node
+      // bound where it was, so ctx is captured before any await.
+      const ctx: MsgEndpoint = { endpoint: node.endpoint };
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN, ctx)) return;
+      const endpoint = ctx.endpoint;
 
       try {
-        await ensureConnected(node);
+        await ensureConnected(node, endpoint);
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
         done ? done(toCipError(err)) : node.error(describeCipError(err), msg);
@@ -164,7 +170,7 @@ module.exports = function (RED: any) {
       node.status({ fill: "yellow", shape: "dot", text: "browsing..." });
 
       try {
-        const controller = node.endpoint.getController();
+        const controller = endpoint.getController();
         if (!controller) {
           throw new Error("Controller not available");
         }
@@ -222,7 +228,7 @@ module.exports = function (RED: any) {
 
         msg.payload = tags;
         msg.timestamp = Date.now();
-        node.send(msg);
+        node.send(stampEndpoint(msg, endpoint));
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
         node.error(describeCipError(err), msg);

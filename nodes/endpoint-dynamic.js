@@ -18,6 +18,7 @@ exports.applyInitialStatus = applyInitialStatus;
 exports.endpointStatus = endpointStatus;
 exports.clearEndpointNameCache = clearEndpointNameCache;
 exports.resolveEndpointRef = resolveEndpointRef;
+exports.stampEndpoint = stampEndpoint;
 exports.ensureConnected = ensureConnected;
 exports.applyEndpointOptions = applyEndpointOptions;
 exports.handleEndpointMsg = handleEndpointMsg;
@@ -123,7 +124,28 @@ function resolveEndpointRef(RED, ref, type) {
     return live[0];
 }
 /**
- * Wait for the node's endpoint to be usable, connecting it if necessary.
+ * Record which endpoint answered, on an outgoing message.
+ *
+ * Only for endpoints that allow dynamic updates. A statically configured node can answer
+ * from exactly one place for its whole life, so stamping there would add a property to the
+ * output of every existing flow and say nothing the editor does not already show.
+ *
+ * The property this sets is the same one that selects an endpoint on the way in, which is
+ * deliberate: piping a read into a write keeps both halves on the PLC that answered, and a
+ * plain msg.endpoint borrows for one operation rather than re-pointing the downstream node.
+ */
+function stampEndpoint(msg, endpoint) {
+    if (msg && endpoint && endpoint.allowDynamic) {
+        msg.endpoint = endpoint.name || endpoint.id;
+    }
+    return msg;
+}
+/**
+ * Wait for an endpoint to be usable, connecting it if necessary.
+ *
+ * Defaults to the node's own endpoint. `use` names the one endpoint this message borrowed,
+ * which may be down: an endpoint with Auto connect off has nothing connected to it until
+ * something asks, and refusing to connect it here would make the one-message form useless.
  *
  * Only dynamic nodes wait. A statically configured node fails immediately with the same
  * message and the same timing it always has, so existing flows see no change.
@@ -133,8 +155,8 @@ function resolveEndpointRef(RED, ref, type) {
  * autoConnect on. It also covers the reconnect window after a controller drops an idle
  * session.
  */
-function ensureConnected(node) {
-    const endpoint = node.endpoint;
+function ensureConnected(node, use) {
+    const endpoint = use || node.endpoint;
     if (!endpoint)
         return Promise.reject(new Error("No endpoint selected"));
     if (endpoint.connected)
@@ -171,7 +193,7 @@ function applyEndpointOptions(endpoint, override) {
  * @returns true when the message was consumed, either by running an action or by failing,
  *          meaning the caller must return immediately. false to carry on with its own work.
  */
-function handleEndpointMsg(RED, node, msg, send, done, opts) {
+function handleEndpointMsg(RED, node, msg, send, done, opts, ctx) {
     const finish = (err) => {
         if (typeof done === "function") {
             err ? done(err) : done();
@@ -244,17 +266,29 @@ function handleEndpointMsg(RED, node, msg, send, done, opts) {
             return finish(new Error(`Endpoint "${ref}" does not allow dynamic updates. Enable it on that cip-endpoint`));
         }
     }
-    // An action that leaves the named endpoint ready for this node to use binds the node to
-    // it; one that does not, does not. So "connect" and "reconnect" re-point, as does a bare
-    // reference with no action, because a read needs a target. "disconnect" does not, since
-    // binding to something you just tore down strands the node on a dead endpoint, and
-    // "status" does not because it only reports.
-    const repoints = action !== exports.ACTIONS.GET_STATUS && action !== exports.ACTIONS.DISCONNECT;
+    // Only an action moves the node, and only one that leaves the named endpoint bound and
+    // ready to use: "switch", "connect" and "reconnect". "disconnect" does not, since binding
+    // to something you just tore down strands the node on a dead endpoint, and "status" does
+    // not because it only reports.
+    const repoints = action === exports.ACTIONS.SWITCH || action === exports.ACTIONS.CONNECT || action === exports.ACTIONS.RECONNECT;
+    // A bare reference on a data message borrows the endpoint for that one message. It must
+    // not re-point: the node would keep reading the borrowed PLC afterwards while the editor
+    // still showed the configured one, so a single "read this tag from PLC2" would quietly
+    // redirect every later read. Use "switch" to move a node for good.
+    if (!action && target && opts.borrowable === false) {
+        return finish(new Error(`This node has no per-message operation to use "${ref}" for. ` +
+            `Set msg.action = "switch" to move it to that endpoint`));
+    }
     // Everything is validated; side effects start here.
     if (target && repoints)
         opts.switchTo(target);
-    if (!action)
-        return false; // the common path: carry on and read or write
+    if (!action) {
+        // The common path: carry on and read or write, against the borrowed endpoint if one
+        // was named and the node's own otherwise.
+        if (target && ctx)
+            ctx.endpoint = target;
+        return false;
+    }
     if (extra) {
         extra(msg, send, done);
         return true;

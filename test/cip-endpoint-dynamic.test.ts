@@ -7,6 +7,7 @@ import {
   ensureConnected,
   handleEndpointMsg,
   resolveEndpointRef,
+  stampEndpoint,
 } from "../src/endpoint-dynamic";
 import { describeCipError, toCipError } from "../src/utils";
 
@@ -67,7 +68,15 @@ function makeRED(endpoints: FakeEndpoint[]) {
 }
 
 /** Drives handleEndpointMsg and reports what happened. */
-function dispatch(msg: any, opts: { current?: FakeEndpoint; others?: FakeEndpoint[]; extraActions?: any } = {}) {
+function dispatch(
+  msg: any,
+  opts: {
+    current?: FakeEndpoint;
+    others?: FakeEndpoint[];
+    extraActions?: any;
+    borrowable?: boolean;
+  } = {}
+) {
   const current = opts.current ?? makeEndpoint("PLC1");
   const others = opts.others ?? [makeEndpoint("PLC2")];
   const RED = makeRED([current, ...others]);
@@ -82,14 +91,25 @@ function dispatch(msg: any, opts: { current?: FakeEndpoint; others?: FakeEndpoin
   };
 
   let switchedTo: string | null = null;
-  const consumed = handleEndpointMsg(RED, node, msg, (m: any) => sent.push(m), done, {
-    type: "cip-endpoint",
-    switchTo: (ep: any) => {
-      switchedTo = ep.name;
-      node.endpoint = ep;
+  // What a node passes in and reads back: which endpoint this one message acts against.
+  const ctx = { endpoint: current as any };
+  const consumed = handleEndpointMsg(
+    RED,
+    node,
+    msg,
+    (m: any) => sent.push(m),
+    done,
+    {
+      type: "cip-endpoint",
+      switchTo: (ep: any) => {
+        switchedTo = ep.name;
+        node.endpoint = ep;
+      },
+      extraActions: opts.extraActions,
+      borrowable: opts.borrowable,
     },
-    extraActions: opts.extraActions,
-  });
+    ctx
+  );
 
   return {
     consumed,
@@ -97,6 +117,14 @@ function dispatch(msg: any, opts: { current?: FakeEndpoint; others?: FakeEndpoin
     node,
     current,
     others,
+    /** Name of the endpoint the message will be carried out against. */
+    get usedEndpoint() {
+      return ctx.endpoint ? ctx.endpoint.name : null;
+    },
+    /** Set when the message borrowed an endpoint instead of moving the node onto it. */
+    get borrowed() {
+      return ctx.endpoint && ctx.endpoint !== node.endpoint ? ctx.endpoint.name : null;
+    },
     get switchedTo() {
       return switchedTo;
     },
@@ -340,10 +368,27 @@ describe("handleEndpointMsg: msg.endpoint validation", () => {
 });
 
 describe("handleEndpointMsg: actions", () => {
-  it("switches on a bare endpoint reference and still reads", () => {
+  it("borrows a bare endpoint reference for one message without moving the node", () => {
     const r = dispatch({ endpoint: "PLC2", tagName: "X" });
+    expect(r.consumed).toBe(false); // the caller carries on and reads
+    expect(r.borrowed).toBe("PLC2"); // against PLC2
+    expect(r.switchedTo).toBe(null); // but the node stays where it was
+    expect(r.node.endpoint.name).toBe("PLC1");
+  });
+
+  it("leaves a message that names no endpoint on the node's own", () => {
+    const r = dispatch({ tagName: "X" });
     expect(r.consumed).toBe(false);
-    expect(r.switchedTo).toBe("PLC2");
+    expect(r.borrowed).toBe(null);
+    expect(r.usedEndpoint).toBe("PLC1");
+  });
+
+  it("rejects a bare reference on a node with no operation to borrow it for", () => {
+    const r = dispatch({ endpoint: "PLC2", tagName: "X" }, { borrowable: false });
+    expect(r.consumed).toBe(true);
+    expect(r.error?.message).toMatch(/msg\.action = "switch"/);
+    expect(r.switchedTo).toBe(null);
+    expect(r.node.endpoint.name).toBe("PLC1");
   });
 
   it("switch re-points without connecting", () => {
@@ -524,5 +569,38 @@ describe("handleEndpointMsg: done is called exactly once", () => {
     const r = dispatch(msg);
     await r.settled();
     expect(r.doneCount).toBe(1);
+  });
+});
+
+describe("stampEndpoint", () => {
+  it("names the endpoint that answered", () => {
+    const ep = makeEndpoint("PLC2", { allowDynamic: true });
+    expect(stampEndpoint({ payload: 1 }, ep).endpoint).toBe("PLC2");
+  });
+
+  it("falls back to the id when the endpoint is unnamed", () => {
+    const ep = makeEndpoint("PLC2", { allowDynamic: true, name: "" });
+    expect(stampEndpoint({ payload: 1 }, ep).endpoint).toBe(ep.id);
+  });
+
+  it("leaves a static node's output alone", () => {
+    // Nothing can move a locked endpoint, so the property would only add noise to the
+    // output of flows that predate dynamic control.
+    const ep = makeEndpoint("PLC2", { allowDynamic: false });
+    expect(stampEndpoint({ payload: 1 }, ep)).not.toHaveProperty("endpoint");
+  });
+
+  it("rides back in as a borrow rather than a re-point", () => {
+    // A read piped into a write keeps both halves on the PLC that answered.
+    const ep = makeEndpoint("PLC2", { allowDynamic: true });
+    const out = stampEndpoint({ payload: 1 }, ep);
+    const r = dispatch({ ...out, tagName: "X" });
+    expect(r.borrowed).toBe("PLC2");
+    expect(r.switchedTo).toBe(null);
+  });
+
+  it("tolerates no endpoint and no message", () => {
+    expect(stampEndpoint({ payload: 1 }, null)).not.toHaveProperty("endpoint");
+    expect(() => stampEndpoint(null, makeEndpoint("PLC2"))).not.toThrow();
   });
 });
