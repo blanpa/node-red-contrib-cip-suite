@@ -15,6 +15,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const types_1 = require("./types");
 const utils_1 = require("./utils");
+const endpoint_dynamic_1 = require("./endpoint-dynamic");
 module.exports = function (RED) {
     function CipWriteNode(config) {
         RED.nodes.createNode(this, config);
@@ -30,6 +31,27 @@ module.exports = function (RED) {
             node.status({ fill: "red", shape: "ring", text: "no endpoint" });
             return;
         }
+        // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+        // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+        // which after a restart is the previous run's status.
+        (0, endpoint_dynamic_1.applyInitialStatus)(node);
+        /** Rebind to a different endpoint, moving our registration with us. */
+        function useEndpoint(endpoint) {
+            if (endpoint === node.endpoint)
+                return;
+            // Deregistering is enough to stop the old endpoint's broadcasts reaching us: it
+            // fans out by emitting on its registered user nodes.
+            if (node.endpoint)
+                node.endpoint.deregister(node);
+            node.endpoint = endpoint;
+            endpoint.register(node, { connect: false });
+            if (!endpoint.connected) {
+                node.status(endpoint.connecting
+                    ? utils_1.STATUS.connecting((0, endpoint_dynamic_1.endpointLabel)(node))
+                    : utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
+            }
+        }
+        const DYN = { type: "cip-endpoint", switchTo: useEndpoint };
         /**
          * Determine the byte size of a CIP data type for bit mask operations.
          */
@@ -59,9 +81,12 @@ module.exports = function (RED) {
         /**
          * Write a single tag with support for bit access, array elements, array ranges, and UDTs.
          */
-        async function writeSingleTag(tagName, value) {
+        async function writeSingleTag(tagName, value, use) {
             const parsed = (0, utils_1.parseTagName)(tagName);
-            const controller = node.endpoint.getController();
+            const endpoint = use || node.endpoint;
+            if (!endpoint)
+                throw new Error("No endpoint selected");
+            const controller = endpoint.getController();
             if (!controller)
                 throw new Error("Controller not available");
             const { Tag } = require("st-ethernet-ip");
@@ -77,14 +102,14 @@ module.exports = function (RED) {
                 const bitValue = Boolean(value);
                 // Try atomic read-modify-write first (CIP service 0x4E)
                 if (node.useAtomicBitWrite &&
-                    typeof node.endpoint.readModifyWriteTag === "function") {
+                    typeof endpoint.readModifyWriteTag === "function") {
                     try {
                         // Need to read the tag first to determine type/size
                         const tag = new Tag(parsed.baseName);
                         await controller.readTag(tag);
                         const byteSize = getTypeByteSize(tag.type);
                         const { orMask, andMask } = (0, utils_1.buildBitMasks)(byteSize, parsed.bitIndex, bitValue);
-                        await node.endpoint.readModifyWriteTag(parsed.baseName, orMask, andMask);
+                        await endpoint.readModifyWriteTag(parsed.baseName, orMask, andMask);
                         return {
                             success: true,
                             tagName,
@@ -198,11 +223,11 @@ module.exports = function (RED) {
         /**
          * Write multiple tags in batch.
          */
-        async function writeBatch(tags) {
+        async function writeBatch(tags, use) {
             const results = [];
             for (const item of tags) {
                 try {
-                    const r = await writeSingleTag(item.name, item.value);
+                    const r = await writeSingleTag(item.name, item.value, use);
                     results.push(r);
                 }
                 catch (err) {
@@ -219,21 +244,30 @@ module.exports = function (RED) {
         }
         // Connection lifecycle
         node.on("cip:connected", function () {
-            node.status(utils_1.STATUS.connected());
+            node.status(utils_1.STATUS.connected((0, endpoint_dynamic_1.endpointLabel)(node)));
         });
         node.on("cip:connecting", function () {
-            node.status(utils_1.STATUS.connecting());
+            node.status(utils_1.STATUS.connecting((0, endpoint_dynamic_1.endpointLabel)(node)));
         });
         node.on("cip:error", function () {
             node.status({ fill: "red", shape: "ring", text: "connection error" });
         });
         node.on("cip:disconnected", function () {
-            node.status(utils_1.STATUS.disconnected());
+            node.status(utils_1.STATUS.disconnected((0, endpoint_dynamic_1.endpointLabel)(node)));
         });
-        node.on("input", async function (msg) {
-            if (!node.endpoint.connected) {
-                node.status({ fill: "red", shape: "ring", text: "not connected" });
-                node.error("Not connected to PLC", msg);
+        node.on("input", async function (msg, send, done) {
+            // A bare msg.endpoint names the endpoint for this write only and leaves the node
+            // bound where it was, so ctx is captured before any await.
+            const ctx = { endpoint: node.endpoint };
+            if ((0, endpoint_dynamic_1.handleEndpointMsg)(RED, node, msg, send, done, DYN, ctx))
+                return;
+            const endpoint = ctx.endpoint;
+            try {
+                await (0, endpoint_dynamic_1.ensureConnected)(node, endpoint);
+            }
+            catch (err) {
+                node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
+                done ? done((0, utils_1.toCipError)(err)) : node.error((0, utils_1.describeCipError)(err), msg);
                 return;
             }
             if (node._writing) {
@@ -244,7 +278,7 @@ module.exports = function (RED) {
             try {
                 // Batch mode: msg.tags is array of {name, value}
                 if (Array.isArray(msg.tags)) {
-                    const { result: batchResults, elapsed } = await (0, utils_1.withTiming)(() => writeBatch(msg.tags));
+                    const { result: batchResults, elapsed } = await (0, utils_1.withTiming)(() => writeBatch(msg.tags, endpoint));
                     const allOk = batchResults.every((r) => r.success);
                     msg.payload = batchResults;
                     node.status({
@@ -252,7 +286,7 @@ module.exports = function (RED) {
                         shape: "dot",
                         text: `${batchResults.length} tags written (${elapsed}ms)`,
                     });
-                    node.send(msg);
+                    node.send((0, endpoint_dynamic_1.stampEndpoint)(msg, endpoint));
                     return;
                 }
                 // Single tag mode
@@ -266,17 +300,17 @@ module.exports = function (RED) {
                     node.error("No value to write", msg);
                     return;
                 }
-                const { result, elapsed } = await (0, utils_1.withTiming)(() => writeSingleTag(tag, value));
+                const { result, elapsed } = await (0, utils_1.withTiming)(() => writeSingleTag(tag, value, endpoint));
                 node.status({
                     fill: "green",
                     shape: "dot",
                     text: `${tag} written (${elapsed}ms)`,
                 });
                 msg.payload = result;
-                node.send(msg);
+                node.send((0, endpoint_dynamic_1.stampEndpoint)(msg, endpoint));
             }
             catch (err) {
-                node.status({ fill: "red", shape: "ring", text: err.message });
+                node.status({ fill: "red", shape: "ring", text: (0, utils_1.describeCipError)(err) });
                 msg.payload = {
                     success: false,
                     tagName: msg.tagName || node.tagName,
@@ -284,13 +318,14 @@ module.exports = function (RED) {
                     timestamp: Date.now(),
                 };
                 node.error(`Write failed for ${msg.tagName || node.tagName}: ${err.message}`, msg);
-                node.send(msg);
+                node.send((0, endpoint_dynamic_1.stampEndpoint)(msg, endpoint));
             }
             finally {
                 node._writing = false;
             }
         });
-        node.endpoint.register(node);
+        if (node.endpoint)
+            node.endpoint.register(node);
         node.on("close", function (done) {
             if (node.endpoint) {
                 node.endpoint.deregister(node);

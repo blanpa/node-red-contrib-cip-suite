@@ -12,6 +12,15 @@ import {
   NodeStatus,
 } from "./types";
 import { STATUS } from "./utils";
+import {
+  DynOpts,
+  MsgEndpoint,
+  handleEndpointMsg,
+  stampEndpoint,
+  ensureConnected,
+  endpointLabel,
+  applyInitialStatus
+} from "./endpoint-dynamic";
 
 /** Controller run mode status bit masks (CIP Identity Object, Attribute 5). */
 const RUN_MODE_MAP: Record<number, string> = {
@@ -88,19 +97,46 @@ module.exports = function (RED: any) {
       return;
     }
 
+    // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+    // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+    // which after a restart is the previous run's status.
+    applyInitialStatus(node);
+
+    /** Rebind to a different endpoint, moving our registration with us. */
+    function useEndpoint(endpoint: any): void {
+      if (endpoint === node.endpoint) return;
+      stopPolling();
+      // Deregistering is enough to stop the old endpoint's broadcasts reaching us: it
+      // fans out by emitting on its registered user nodes.
+      if (node.endpoint) node.endpoint.deregister(node);
+      node.endpoint = endpoint;
+      endpoint.register(node, { connect: false });
+      if (!endpoint.connected) {
+        node.status(
+          endpoint.connecting
+            ? STATUS.connecting(endpointLabel(node))
+            : STATUS.disconnected(endpointLabel(node))
+        );
+      }
+    }
+
+    const DYN: DynOpts = { type: "cip-endpoint", switchTo: useEndpoint };
+
     /**
      * Read controller properties and send as output message.
      */
-    async function readControllerInfo(triggerMsg?: any): Promise<void> {
+    async function readControllerInfo(triggerMsg?: any, use?: any): Promise<void> {
+      // The endpoint for this message alone. Polling passes none and uses the node's own.
+      const endpoint = use || node.endpoint;
       if (node._reading) return; // backpressure
-      if (!node.endpoint.connected) {
-        node.status(STATUS.disconnected());
+      if (!endpoint || !endpoint.connected) {
+        node.status(STATUS.disconnected(endpointLabel(node)));
         return;
       }
 
       node._reading = true;
       try {
-        const controller = node.endpoint.getController();
+        const controller = endpoint.getController();
         if (!controller) {
           node.status(STATUS.error("no controller"));
           return;
@@ -160,16 +196,16 @@ module.exports = function (RED: any) {
         // Wall clock time (if supported)
         let wallClock: Date | null = null;
         try {
-          if (typeof node.endpoint.readWallClock === "function") {
-            wallClock = await node.endpoint.readWallClock();
+          if (typeof endpoint.readWallClock === "function") {
+            wallClock = await endpoint.readWallClock();
           }
         } catch (_e) {
           // Not all controllers support wall clock
         }
 
         // Connection metrics
-        const metrics: ConnectionMetrics = node.endpoint.metrics || {
-          connected: node.endpoint.connected,
+        const metrics: ConnectionMetrics = endpoint.metrics || {
+          connected: endpoint.connected,
           connectTime: null,
           lastResponseTime: 0,
           avgResponseTime: 0,
@@ -225,7 +261,7 @@ module.exports = function (RED: any) {
           outMsg.topic = triggerMsg.topic;
         }
 
-        node.send(outMsg);
+        node.send(stampEndpoint(outMsg, endpoint));
       } catch (err: any) {
         node.status(STATUS.error(err.message));
         node.error(`Controller info read failed: ${err.message}`, triggerMsg || {});
@@ -237,23 +273,24 @@ module.exports = function (RED: any) {
     /**
      * Handle runtime commands (run, program, test, reset).
      */
-    async function handleCommand(command: string, msg: any): Promise<void> {
+    async function handleCommand(command: string, msg: any, use?: any): Promise<void> {
       const cmd = command.toLowerCase().trim();
+      const endpoint = use || node.endpoint;
       try {
         switch (cmd) {
           case "run":
           case "program":
           case "test":
-            if (typeof node.endpoint.changeMode === "function") {
-              await node.endpoint.changeMode(cmd as "run" | "program" | "test");
+            if (typeof endpoint.changeMode === "function") {
+              await endpoint.changeMode(cmd as "run" | "program" | "test");
               node.log(`Mode change to "${cmd}" requested`);
             } else {
               node.warn(`changeMode() not available on endpoint`);
             }
             break;
           case "reset":
-            if (typeof node.endpoint.resetFault === "function") {
-              await node.endpoint.resetFault();
+            if (typeof endpoint.resetFault === "function") {
+              await endpoint.resetFault();
               node.log("Fault reset requested");
             } else {
               node.warn(`resetFault() not available on endpoint`);
@@ -264,7 +301,7 @@ module.exports = function (RED: any) {
             return;
         }
         // After command, re-read status
-        await readControllerInfo(msg);
+        await readControllerInfo(msg, endpoint);
       } catch (err: any) {
         node.status(STATUS.error(err.message));
         node.error(`Command "${cmd}" failed: ${err.message}`, msg);
@@ -292,12 +329,12 @@ module.exports = function (RED: any) {
     // -- Connection lifecycle events --
 
     node.on("cip:connected", function () {
-      node.status(STATUS.connected());
+      node.status(STATUS.connected(endpointLabel(node)));
       startPolling();
     });
 
     node.on("cip:connecting", function () {
-      node.status(STATUS.connecting());
+      node.status(STATUS.connecting(endpointLabel(node)));
       stopPolling();
     });
 
@@ -307,39 +344,43 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:disconnected", function () {
-      node.status(STATUS.disconnected());
+      node.status(STATUS.disconnected(endpointLabel(node)));
       stopPolling();
     });
 
     // -- Input handling --
 
-    node.on("input", function (msg: any) {
-      // Handle runtime commands
-      if (msg.command) {
-        if (!node.endpoint.connected) {
-          node.error("Not connected to PLC", msg);
-          return;
-        }
-        handleCommand(msg.command, msg);
-        return;
-      }
+    node.on("input", function (msg: any, send: any, done: any) {
+      // msg.command (run/program/test/reset) is this node's own vocabulary and is
+      // unrelated to msg.action, which controls the connection.
+      // A bare msg.endpoint names the endpoint for this message only and leaves the node
+      // bound where it was, so ctx is captured before any await.
+      const ctx: MsgEndpoint = { endpoint: node.endpoint };
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN, ctx)) return;
+      const endpoint = ctx.endpoint;
 
-      // Trigger-based read
-      if (!node.endpoint.connected) {
-        node.status(STATUS.disconnected());
-        node.error("Not connected to PLC", msg);
-        return;
-      }
-      readControllerInfo(msg);
+      ensureConnected(node, endpoint)
+        .then(() => {
+          if (msg.command) {
+            handleCommand(msg.command, msg, endpoint);
+            return;
+          }
+          readControllerInfo(msg, endpoint);
+        })
+        .catch((err: Error) => {
+          node.status(STATUS.disconnected(endpointLabel(node)));
+          done ? done(err) : node.error(err.message, msg);
+        });
     });
 
     // Register with endpoint
-    node.endpoint.register(node);
+    if (node.endpoint) node.endpoint.register(node);
 
-    node.on("close", function (done: () => void) {
+    node.on("close", function (removed: boolean, done: () => void) {
       stopPolling();
       if (node.endpoint) {
-        node.endpoint.deregister(node);
+        node.endpoint.deregister(node, done, removed);
+        return;
       }
       done();
     });

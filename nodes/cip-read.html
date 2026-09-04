@@ -122,4 +122,10 @@
   <p>Send <code>msg.tags</code> as an array of tag names to read several tags at once.
   <code>msg.payload</code> is an array of <code>{ tagName, value, type }</code> objects in the
   order requested.</p>
+
+  <h3>Dynamic control</h3>
+  <p>The PLC connection can be selected, re-pointed and controlled at runtime with
+  <code>msg.endpoint</code> and <code>msg.action</code> when the endpoint has the
+  <b>Dynamic</b> option enabled. See the <code>cip-endpoint</code> help for the
+  full reference.</p>
 </script>

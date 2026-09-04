@@ -12,6 +12,13 @@ import {
   NodeStatus,
 } from "./types";
 import { parseTagList, cipTypeName, STATUS } from "./utils";
+import {
+  DynOpts,
+  handleEndpointMsg,
+  stampEndpoint,
+  endpointLabel,
+  applyInitialStatus
+} from "./endpoint-dynamic";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Tag, TagGroup } = require("st-ethernet-ip");
@@ -35,6 +42,9 @@ module.exports = function (RED: any) {
     node._tagStates = [] as TagState[];
     node._scanning = false;
     node._scanTimer = null as ReturnType<typeof setInterval> | null;
+    // Bumped every time the scan stops. A cycle already awaiting the PLC carries the
+    // generation it started under, so it can tell whether it still speaks for the node.
+    node._scanGen = 0;
     node._inFlight = false;
     node._tagGroup = null;
     node._configuredTags = config.tags || "";
@@ -43,6 +53,80 @@ module.exports = function (RED: any) {
       node.status({ fill: "red", shape: "ring", text: "no endpoint" } as NodeStatus);
       return;
     }
+
+    // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+    // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+    // which after a restart is the previous run's status.
+    applyInitialStatus(node);
+
+    /**
+     * Rebind to a different endpoint.
+     *
+     * The TagGroup is built against a specific controller's tag list, so it has to be torn
+     * down and rebuilt rather than carried across.
+     */
+    function useEndpoint(endpoint: any): void {
+      if (endpoint === node.endpoint) return;
+      stopScan();
+      teardownTags();
+      if (node.endpoint) node.endpoint.deregister(node);
+      node.endpoint = endpoint;
+      endpoint.register(node, { connect: false });
+      if (endpoint.connected) {
+        const tagNames = resolveTagNames();
+        if (tagNames.length > 0) {
+          setupTags(tagNames);
+          startScan();
+        }
+      } else {
+        node.status(
+          endpoint.connecting
+            ? STATUS.connecting(endpointLabel(node))
+            : STATUS.disconnected(endpointLabel(node))
+        );
+      }
+    }
+
+    const DYN: DynOpts = {
+      type: "cip-endpoint",
+      switchTo: useEndpoint,
+      // This node holds a scan loop rather than answering one message at a time, so there
+      // is no single operation a bare msg.endpoint could be borrowed for. Naming one
+      // without an action is rejected instead, pointing at "switch".
+      borrowable: false,
+      // Documented at nodes/cip-subscribe.html but never implemented until now.
+      extraActions: {
+        start: (_msg: any, _send: any, done: any) => {
+          const tagNames = resolveTagNames();
+          if (tagNames.length === 0) {
+            done(new Error("No tags configured"));
+            return;
+          }
+          if (!node._scanning) {
+            setupTags(tagNames);
+            startScan();
+          }
+          done();
+        },
+        stop: (_msg: any, _send: any, done: any) => {
+          stopScan();
+          node.status(STATUS.idle());
+          done();
+        },
+        restart: (_msg: any, _send: any, done: any) => {
+          stopScan();
+          teardownTags();
+          const tagNames = resolveTagNames();
+          if (tagNames.length === 0) {
+            done(new Error("No tags configured"));
+            return;
+          }
+          setupTags(tagNames);
+          startScan();
+          done();
+        },
+      },
+    };
 
     /**
      * Parse tag names from config string or msg override.
@@ -94,25 +178,36 @@ module.exports = function (RED: any) {
      * that conflicts with our own setInterval timing.
      */
     function startScan(): void {
-      stopScan();
-      const controller = node.endpoint.getController();
+      stopScan(); // bumps the generation, orphaning any cycle still in flight
+      const endpoint = node.endpoint;
+      const controller = endpoint && endpoint.getController();
       if (!controller || node._tagStates.length === 0 || !node._tagGroup) return;
+
+      // Both are captured, not read back off the node: a switch replaces them while a
+      // read is still outstanding against the controller this cycle started on.
+      const gen = node._scanGen;
+      const group = node._tagGroup;
 
       node._scanning = true;
       node._inFlight = false;
 
+      const current = (): boolean => node._scanning && node._scanGen === gen;
+
       const runCycle = async () => {
-        if (!node._scanning || node._inFlight) return;
+        if (!current() || node._inFlight) return;
         node._inFlight = true;
         try {
-          await controller.readTagGroup(node._tagGroup);
-          if (node._scanning) {
-            processScanResults();
+          await controller.readTagGroup(group);
+          // Without this the values just read from the endpoint we have since left would
+          // be emitted as though they came from the one we switched to.
+          if (current()) {
+            processScanResults(endpoint);
           }
         } catch (err: any) {
-          node.log(`Scan error: ${err.message}`);
+          if (current()) node.log(`Scan error: ${err.message}`);
         } finally {
-          node._inFlight = false;
+          // A superseded cycle must not clear the flag out from under its replacement.
+          if (node._scanGen === gen) node._inFlight = false;
         }
       };
 
@@ -120,7 +215,7 @@ module.exports = function (RED: any) {
       // session fully settle (avoids 1-2 TIMEOUT errors on startup).
       node._scanTimer = setTimeout(() => {
         runCycle();
-        if (node._scanning) {
+        if (current()) {
           node._scanTimer = setInterval(runCycle, node.scanRate);
         }
       }, 500) as any;
@@ -132,6 +227,9 @@ module.exports = function (RED: any) {
      */
     function stopScan(): void {
       node._scanning = false;
+      // Retire the current generation. Clearing the timer stops future cycles, but one
+      // already awaiting the PLC would otherwise come back and emit after the switch.
+      node._scanGen++;
       if (node._scanTimer) {
         clearTimeout(node._scanTimer);
         clearInterval(node._scanTimer);
@@ -142,7 +240,7 @@ module.exports = function (RED: any) {
     /**
      * Check tag values after a scan cycle, apply deadband, emit message.
      */
-    function processScanResults(): void {
+    function processScanResults(endpoint?: any): void {
       const states = node._tagStates as TagState[];
       if (states.length === 0) return;
 
@@ -195,7 +293,7 @@ module.exports = function (RED: any) {
           scanRate: node.scanRate,
           timestamp: now,
         };
-        node.send(msg);
+        node.send(stampEndpoint(msg, endpoint));
       } else {
         // Multi-tag mode: payload = object
         const payload: Record<string, any> = {};
@@ -210,7 +308,7 @@ module.exports = function (RED: any) {
           scanRate: node.scanRate,
           timestamp: now,
         };
-        node.send(msg);
+        node.send(stampEndpoint(msg, endpoint));
       }
 
       updateStatus();
@@ -244,7 +342,7 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:connecting", function () {
-      node.status(STATUS.connecting());
+      node.status(STATUS.connecting(endpointLabel(node)));
       stopScan();
     });
 
@@ -254,13 +352,20 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:disconnected", function () {
-      node.status(STATUS.disconnected());
+      node.status(STATUS.disconnected(endpointLabel(node)));
       stopScan();
     });
 
     // -- Runtime input for reconfiguration --
 
-    node.on("input", function (msg: any) {
+    node.on("input", function (msg: any, send: any, done: any) {
+      // msg.command is kept as a deprecated alias for the start/stop/restart actions the
+      // help has always documented.
+      if (msg.action === undefined && typeof msg.command === "string") {
+        msg = { ...msg, action: msg.command };
+      }
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
+
       // Runtime override: change tag list
       if (msg.tags !== undefined) {
         const newTags = typeof msg.tags === "string"
@@ -292,13 +397,14 @@ module.exports = function (RED: any) {
     });
 
     // Register with endpoint
-    node.endpoint.register(node);
+    if (node.endpoint) node.endpoint.register(node);
 
-    node.on("close", function (done: () => void) {
+    node.on("close", function (removed: boolean, done: () => void) {
       stopScan();
       teardownTags();
       if (node.endpoint) {
-        node.endpoint.deregister(node);
+        node.endpoint.deregister(node, done, removed);
+        return;
       }
       done();
     });

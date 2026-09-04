@@ -11,7 +11,16 @@
  */
 
 import { CIPService, CIP_STATUS } from "./types";
-import { cipStatusText, STATUS, withTiming } from "./utils";
+import { cipStatusText, STATUS, withTiming, describeCipError, toCipError } from "./utils";
+import {
+  DynOpts,
+  MsgEndpoint,
+  handleEndpointMsg,
+  stampEndpoint,
+  ensureConnected,
+  endpointLabel,
+  applyInitialStatus
+} from "./endpoint-dynamic";
 
 /** Single CIP request descriptor for Multiple Service Packet */
 interface CIPRequestDescriptor {
@@ -48,6 +57,31 @@ module.exports = function (RED: any) {
       node.status({ fill: "red", shape: "ring", text: "no endpoint" });
       return;
     }
+
+    // Reflect the endpoint's real state immediately. Without this a node whose endpoint
+    // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
+    // which after a restart is the previous run's status.
+    applyInitialStatus(node);
+
+    /** Rebind to a different endpoint, moving our registration with us. */
+    function useEndpoint(endpoint: any): void {
+      if (endpoint === node.endpoint) return;
+      
+      // Deregistering is enough to stop the old endpoint's broadcasts reaching us: it
+      // fans out by emitting on its registered user nodes.
+      if (node.endpoint) node.endpoint.deregister(node);
+      node.endpoint = endpoint;
+      endpoint.register(node, { connect: false });
+      if (!endpoint.connected) {
+        node.status(
+          endpoint.connecting
+            ? STATUS.connecting(endpointLabel(node))
+            : STATUS.disconnected(endpointLabel(node))
+        );
+      }
+    }
+
+    const DYN: DynOpts = { type: "cip-endpoint", switchTo: useEndpoint };
 
     /**
      * Convert data input to Buffer. Accepts Buffer, hex string, or number array.
@@ -241,11 +275,11 @@ module.exports = function (RED: any) {
 
     // Connection lifecycle
     node.on("cip:connected", function () {
-      node.status(STATUS.connected());
+      node.status(STATUS.connected(endpointLabel(node)));
     });
 
     node.on("cip:connecting", function () {
-      node.status(STATUS.connecting());
+      node.status(STATUS.connecting(endpointLabel(node)));
     });
 
     node.on("cip:error", function () {
@@ -253,13 +287,21 @@ module.exports = function (RED: any) {
     });
 
     node.on("cip:disconnected", function () {
-      node.status(STATUS.disconnected());
+      node.status(STATUS.disconnected(endpointLabel(node)));
     });
 
-    node.on("input", async function (msg: any) {
-      if (!node.endpoint.connected) {
-        node.status({ fill: "red", shape: "ring", text: "not connected" });
-        node.error("Not connected to PLC", msg);
+    node.on("input", async function (msg: any, send: any, done: any) {
+      // A bare msg.endpoint names the endpoint for this request only and leaves the node
+      // bound where it was, so ctx is captured before any await.
+      const ctx: MsgEndpoint = { endpoint: node.endpoint };
+      if (handleEndpointMsg(RED, node, msg, send, done, DYN, ctx)) return;
+      const endpoint = ctx.endpoint;
+
+      try {
+        await ensureConnected(node, endpoint);
+      } catch (err: any) {
+        node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
+        done ? done(toCipError(err)) : node.error(describeCipError(err), msg);
         return;
       }
 
@@ -272,7 +314,7 @@ module.exports = function (RED: any) {
       node.status({ fill: "yellow", shape: "dot", text: "sending..." });
 
       try {
-        const controller = node.endpoint.getController();
+        const controller = endpoint.getController();
         if (!controller) {
           throw new Error("Controller not available");
         }
@@ -306,7 +348,7 @@ module.exports = function (RED: any) {
             shape: "dot",
             text: `${responses.length} responses (${elapsed}ms)`,
           });
-          node.send(msg);
+          node.send(stampEndpoint(msg, endpoint));
           return;
         }
 
@@ -359,9 +401,9 @@ module.exports = function (RED: any) {
           });
         }
 
-        node.send(msg);
+        node.send(stampEndpoint(msg, endpoint));
       } catch (err: any) {
-        node.status({ fill: "red", shape: "ring", text: err.message });
+        node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
         msg.payload = {
           success: false,
           service: msg.service || node.service,
@@ -373,13 +415,13 @@ module.exports = function (RED: any) {
           timestamp: Date.now(),
         };
         node.error(`Raw CIP request failed: ${err.message}`, msg);
-        node.send(msg);
+        node.send(stampEndpoint(msg, endpoint));
       } finally {
         node._busy = false;
       }
     });
 
-    node.endpoint.register(node);
+    if (node.endpoint) node.endpoint.register(node);
 
     node.on("close", function (done: () => void) {
       if (node.endpoint) {

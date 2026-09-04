@@ -14,6 +14,8 @@ exports.setBit = setBit;
 exports.buildBitMasks = buildBitMasks;
 exports.cipStatusText = cipStatusText;
 exports.cipTypeName = cipTypeName;
+exports.describeCipError = describeCipError;
+exports.toCipError = toCipError;
 exports.debounce = debounce;
 exports.parseTagList = parseTagList;
 exports.withTiming = withTiming;
@@ -217,17 +219,68 @@ function cipTypeName(code) {
     return types_1.CIP_TYPE_NAMES[code] || `0x${code.toString(16)}`;
 }
 /**
+ * Render whatever st-ethernet-ip threw as readable text.
+ *
+ * The library rejects a failed connect with a bare object such as
+ * `{ generalStatusCode: 1, extendedStatus: [273] }`, so reading `.message` off it yields
+ * "undefined" and the real cause is lost.
+ */
+function describeCipError(err) {
+    if (err === null || err === undefined)
+        return "unknown error";
+    if (typeof err === "string")
+        return err;
+    if (err instanceof Error && err.message)
+        return err.message;
+    if (typeof err.message === "string" && err.message)
+        return err.message;
+    if (typeof err.generalStatusCode === "number") {
+        const hex = (n, w) => "0x" + n.toString(16).padStart(w, "0");
+        const ext = Array.isArray(err.extendedStatus) && err.extendedStatus.length > 0
+            ? `, extended ${err.extendedStatus.map((e) => hex(e, 4)).join(", ")}`
+            : "";
+        return `${cipStatusText(err.generalStatusCode)} (CIP ${hex(err.generalStatusCode, 2)}${ext})`;
+    }
+    try {
+        const json = JSON.stringify(err);
+        if (json && json !== "{}")
+            return json;
+    }
+    catch {
+        // fall through
+    }
+    return String(err);
+}
+/**
+ * Turn any thrown value into a real Error, so callers can pass it to done() and Catch
+ * nodes see a usable message.
+ */
+function toCipError(err, prefix) {
+    const text = describeCipError(err);
+    const wrapped = new Error(prefix ? `${prefix}: ${text}` : text);
+    if (err && typeof err === "object") {
+        if (typeof err.generalStatusCode === "number") {
+            wrapped.generalStatusCode = err.generalStatusCode;
+        }
+        if (err.extendedStatus !== undefined)
+            wrapped.extendedStatus = err.extendedStatus;
+    }
+    return wrapped;
+}
+/**
  * Standard Node-RED status objects.
  */
 exports.STATUS = {
-    connected() {
-        return { fill: "green", shape: "dot", text: "connected" };
+    // `via` names the endpoint in use. Worth showing whenever a node can be re-pointed at
+    // runtime, since "connected" alone does not say what it is connected to.
+    connected(via) {
+        return { fill: "green", shape: "dot", text: via ? `connected: ${via}` : "connected" };
     },
-    connecting() {
-        return { fill: "yellow", shape: "ring", text: "connecting..." };
+    connecting(via) {
+        return { fill: "yellow", shape: "ring", text: via ? `connecting: ${via}` : "connecting..." };
     },
-    disconnected() {
-        return { fill: "red", shape: "ring", text: "disconnected" };
+    disconnected(via) {
+        return { fill: "red", shape: "ring", text: via ? `disconnected: ${via}` : "disconnected" };
     },
     error(msg) {
         return { fill: "red", shape: "dot", text: msg };
