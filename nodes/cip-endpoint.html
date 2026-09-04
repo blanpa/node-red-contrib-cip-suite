@@ -52,3 +52,97 @@
     <span>Enable for Micro800 series (no slot routing)</span>
   </div>
 </script>
+
+<script type="text/javascript">
+  // Shared tag-browse UI for the nodes that offer a Browse button.
+  //
+  // One implementation on purpose. Each node used to carry its own copy, the copies drifted,
+  // and the copy in cip-browse omitted the option value. An <option> with no value attribute
+  // falls back to its text, so that copy's values carried the type suffix.
+  (function () {
+    var ns = (window.cipSuiteEditor = window.cipSuiteEditor || {});
+
+    /**
+     * Wire the Browse button and tag list of the edit dialog that is currently open.
+     *
+     * Call from oneditprepare. Handlers bind to the dialog's own elements, so they are
+     * discarded with the dialog. They used to be delegated from `document`, which left one
+     * set alive per node type: a single click then fired a request for every type, and
+     * whichever response arrived last owned the list.
+     *
+     * Callers reach this through `window.cipSuiteEditor` and check it first. Node-RED serves
+     * every node's HTML at editor load and oneditprepare runs much later, so it is normally
+     * present, but a cip-endpoint node set disabled in Manage Palette would not be served at
+     * all. A bare identifier would then throw a ReferenceError inside oneditprepare and leave
+     * the dialog half-built, where a property lookup on window just yields undefined and costs
+     * the user nothing more than an inert Browse button.
+     */
+    ns.setupTagBrowse = function () {
+      var $btn = $("#node-input-browse-btn");
+      var $sel = $("#node-input-taglist");
+      var $row = $("#node-input-taglist-row");
+      // Absent on nodes that do not show one. jQuery no-ops on an empty set, so the
+      // presence of an element is the whole configuration.
+      var $status = $("#node-input-browse-status");
+      var $name = $("#node-input-tagName");
+
+      $btn.on("click", function () {
+        var endpointId = $("#node-input-endpoint").val();
+        if (!endpointId || endpointId === "_ADD_") {
+          RED.notify("Select and deploy an endpoint first.", "warning");
+          return;
+        }
+        $btn.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
+        $status.text("Loading...");
+        $.getJSON("cip-endpoint/" + endpointId + "/browse")
+          .done(function (tags) {
+            $sel.empty();
+            if (!tags.length) {
+              $sel.append('<option disabled>No tags found</option>');
+              $status.text("No tags found");
+            } else {
+              tags.forEach(function (t) {
+                // The type is shown to help you pick a tag and is never part of the value.
+                // A controller reports types this dialog's Data Type list does not offer
+                // (SINT, LINT, LREAL, UDT template names), so it stays advisory and Data
+                // Type is left on Auto-detect.
+                var label = t.name + (t.type ? "  (" + t.type + ")" : "");
+                $sel.append($("<option>").val(t.name).text(label));
+              });
+              $status.text(tags.length + " tags");
+            }
+            $row.slideDown(200);
+          })
+          .fail(function (xhr) {
+            RED.notify(xhr.responseJSON ? xhr.responseJSON.error : "Browse failed", "error");
+            $status.text("");
+          })
+          .always(function () {
+            $btn.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
+          });
+      });
+
+      // cip-browse lists tags as its own output and has no field to fill.
+      if (!$name.length) {
+        return;
+      }
+
+      var apply = function (collapse) {
+        var name = $sel.val();
+        if (!name) {
+          return;
+        }
+        $name.val(name);
+        if (collapse) {
+          $row.slideUp(200);
+        }
+      };
+      $sel.on("change", function () {
+        apply(false);
+      });
+      $sel.on("dblclick", function () {
+        apply(true);
+      });
+    };
+  })();
+</script>

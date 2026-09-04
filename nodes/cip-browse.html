@@ -12,6 +12,14 @@
     paletteLabel: "cip browse",
     label: function () {
       return this.name || "cip browse";
+    },
+    oneditprepare: function () {
+      // Guarded, see the note on setupTagBrowse in cip-endpoint.html.
+      if (window.cipSuiteEditor) {
+        window.cipSuiteEditor.setupTagBrowse();
+      } else {
+        console.warn("cip-suite: tag browse unavailable, cip-endpoint's editor script did not load");
+      }
     }
   });
 </script>
@@ -52,44 +60,4 @@
   <p>Retrieves the full tag list from the PLC controller. Backpressure is applied: concurrent browse requests are dropped.</p>
   <p>Use the <b>Preview tags</b> button in the node settings to see available tags before deploying.
   The endpoint must be deployed and connected first.</p>
-</script>
-
-<script type="text/javascript">
-  (function () {
-    $(document).on("click", "#node-input-browse-btn", function () {
-      var endpointId = $("#node-input-endpoint").val();
-      if (!endpointId || endpointId === "_ADD_") {
-        RED.notify("Select and deploy an endpoint first.", "warning");
-        return;
-      }
-      var btn = $(this);
-      var status = $("#node-input-browse-status");
-      btn.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
-      status.text("Loading...");
-      $.getJSON("cip-endpoint/" + endpointId + "/browse")
-        .done(function (tags) {
-          var sel = $("#node-input-taglist");
-          sel.empty();
-          if (!tags.length) {
-            sel.append('<option disabled>No tags found</option>');
-            status.text("No tags found");
-          } else {
-            tags.forEach(function (t) {
-              var label = t.name + (t.type ? "  (" + t.type + ")" : "");
-              sel.append($("<option>").text(label));
-            });
-            status.text(tags.length + " tags");
-          }
-          $("#node-input-taglist-row").slideDown(200);
-        })
-        .fail(function (xhr) {
-          var msg = xhr.responseJSON ? xhr.responseJSON.error : "Browse failed";
-          RED.notify(msg, "error");
-          status.text("");
-        })
-        .always(function () {
-          btn.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
-        });
-    });
-  })();
 </script>
