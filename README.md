@@ -509,3 +509,16 @@ Node-RED node type IDs (for example `myprefix-cip-suite-*`) and use your own pal
 category. Node-RED refuses to register a node type that is already claimed, so
 identical type IDs make it impossible to install both packages side by side.
 
+## Contributors
+
+This package is better than it would have been alone. Thank you to everyone who has
+contributed code, and to everyone who took the time to report a problem properly —
+several releases exist because someone described a bug well enough to reproduce it.
+
+| | Contribution |
+|---|---|
+| [@Steve-Mcl](https://github.com/Steve-Mcl) (Stephen McLaughlin) | Dynamic/runtime connection management ([#12](https://github.com/blanpa/node-red-contrib-cip-suite/pull/12), [#10](https://github.com/blanpa/node-red-contrib-cip-suite/issues/10)), the connection lifecycle rework that made a dropped PLC detectable at all ([#11](https://github.com/blanpa/node-red-contrib-cip-suite/pull/11)), and the tag browse fix ([#13](https://github.com/blanpa/node-red-contrib-cip-suite/pull/13)) |
+| [@cgraun](https://github.com/cgraun) | Reported that arrays returned only their first element ([#4](https://github.com/blanpa/node-red-contrib-cip-suite/issues/4)), which uncovered the UDT array, tag casing and program scope bugs fixed in 0.0.7 |
+| [@rmsems](https://github.com/rmsems) | Reported the PowerFlex 525 drive control gaps ([#3](https://github.com/blanpa/node-red-contrib-cip-suite/issues/3)), which led to the extended Forward_Open diagnostics and the drive simulator profile |
+
+New contributors are welcome — see [Contributing and forks](#contributing-and-forks) above.
