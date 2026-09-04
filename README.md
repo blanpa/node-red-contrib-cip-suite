@@ -125,9 +125,15 @@ re-established, so a polled array costs one request per poll:
 | Port | 44818 | EtherNet/IP port |
 | Slot | 0 | Backplane slot (ControlLogix) |
 | Timeout (ms) | 5000 | Connection timeout |
-| Retry (ms) | 5000 | Reconnection interval |
+| Retry (ms) | 5000 | Reconnection interval, doubling up to Max retry |
+| Max retry (ms) | 60000 | Backoff ceiling. Set equal to Retry for a flat interval |
+| Keepalive (ms) | 30000 | Identity reads that hold an idle session open. `0` disables |
+| Auto connect | on | Off leaves the session idle until a `connect` action arrives |
+| Dynamic Control | off | Opt in to runtime control via `msg.action` / `msg.endpoint` |
 | Micro800 | off | Enable for Micro800 (skips ForwardOpen, uses UCMM) |
 | Routing Path | — | Multi-hop routing (e.g. `1/0/2/192.168.1.1`) |
+
+> **Port** is informational. EtherNet/IP is always contacted on 44818.
 
 ### cip-pccc-endpoint
 
@@ -195,10 +201,58 @@ Device **parameters** (read/write) use explicit messaging via `cip-param` (Param
 ## Features
 
 ### Connection Management
-- **Auto-reconnect** with configurable retry interval
+- **Drop detection** — an unexpected socket loss is noticed and retried, rather than leaving the endpoint reporting `connected` forever
+- **Auto-reconnect** with exponential backoff and jitter, so a rack of nodes on one PLC does not retry in lockstep
+- **Keepalive** — periodic Identity reads hold an idle session open (a Micro850 closes one after 120 s)
 - **Connection metrics** — response times, error counts, uptime tracking
 - **Micro800 mode** — bypasses UnconnectedSend, uses direct UCMM messaging
 - **Multi-hop routing** — reach PLCs behind ControlLogix backplanes
+
+### Dynamic Connection Control
+
+Opt in per endpoint with the **Dynamic Control** checkbox, then `cip-read`, `cip-write`,
+`cip-browse`, `cip-raw`, `cip-controller` and `cip-subscribe` accept `msg.action` and
+`msg.endpoint`, following the pattern the core MQTT nodes use. While the checkbox is off,
+both properties are ignored entirely, so existing flows are unaffected.
+
+A message carrying `msg.action` performs that action and does **no** PLC I/O.
+
+| `msg.action` | Effect | Re-points the node |
+|---|---|---|
+| `switch` | Re-points the receiving node at another endpoint | yes |
+| `connect` | Connects. Already connected with no override is a no-op success | yes |
+| `reconnect` | Forces a disconnect then connect, and refreshes the tag list | yes |
+| `disconnect` | Disconnects and stops retrying until told otherwise | no |
+| `status` | Emits connection state and metrics on the output | no |
+| *(none)* | The node's normal read or write | no |
+
+`msg.endpoint` is the id or the configured **Name** of a deployed `cip-endpoint`. A bare
+reference **borrows** that endpoint for one message and leaves the node where it was; use
+`switch` to move a node for good. `cip-subscribe` is the exception — it holds a scan loop
+rather than answering one message at a time, so it requires `switch`.
+
+```js
+// Read a tag from a different PLC, this message only
+msg = { endpoint: "PLC2", tagName: "Line1.Speed" };
+
+// Move this node to another PLC for good
+msg = { action: "switch", endpoint: "PLC2" };
+
+// Report on PLC3 without moving
+msg = { action: "status", endpoint: "PLC3" };
+
+// Re-address the shared config node and reconnect (affects every node using it)
+msg = { action: "connect", endpoint: { target: "config", address: "10.0.0.5", force: true } };
+```
+
+`switch` affects **one node**. A settings object with `target: "config"` changes the
+**shared config node**, so it affects every node using that endpoint. Settings overrides
+apply only to `connect`, since connecting is the only moment new settings take effect, and
+are refused on a live connection unless you add `force: true`. Runtime changes are not
+saved — a full deploy restores whatever is configured in the editor.
+
+Output messages carry `msg.endpoint` naming the PLC that answered, so piping a read into a
+write keeps both halves on the same controller.
 
 ### Backpressure Protection
 All nodes skip subsequent requests while a previous one is in-flight, preventing PLC overload.
@@ -209,6 +263,8 @@ Write nodes support CIP Read-Modify-Write service (0x4E) for safe bit manipulati
 ### Admin HTTP Endpoints
 - `GET /cip-endpoint/:id/browse` — browse tags from a deployed endpoint
 - `GET /cip-endpoint/:id/metrics` — connection statistics (response times, error counts, uptime)
+
+Both require the `cip-endpoint.read` permission where `adminAuth` is configured.
 
 ### Status Indicators
 
