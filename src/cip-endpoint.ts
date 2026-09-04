@@ -26,6 +26,20 @@ const { Controller } = require("st-ethernet-ip");
 /** CIP general status 0x01, which is how a refused ForwardOpen surfaces. */
 const CIP_CONNECTION_FAILURE = 0x01;
 
+/**
+ * Floor for st-ethernet-ip's own session handshake, in ms.
+ *
+ * Controller.connect() calls ENIP.connect() without a timeout argument, so `timeout_sp`
+ * does not apply to the TCP connect or to Session Registered: both fall back to the
+ * library's hardcoded 10s. Measured against an unroutable host, connect rejects after
+ * ~10.0s regardless of how low connTimeout is set. forwardOpen, readControllerProps and
+ * the tag list then each get timeout_sp on top of that.
+ *
+ * The connect watchdog has to clear all of it, or it preempts an attempt that is still
+ * legitimately in progress.
+ */
+const LIB_SESSION_TIMEOUT = 10000;
+
 
 /** Controller run mode constants for Set_Attribute_Single (class 0x01, attr 5) */
 const CONTROLLER_MODE: Record<string, number> = {
@@ -81,8 +95,12 @@ module.exports = function (RED: any) {
       apply("autoConnect", bool, true);
       apply("keepAlive", int, 30000);
       // Opt-in, and deliberately not settable by a runtime override: a message must not be
-      // able to unlock the connection it is trying to change.
-      if (init) node.allowDynamic = bool(config.allowDynamic) && config.allowDynamic !== undefined;
+      // able to unlock the connection it is trying to change. Fails closed rather than
+      // going through bool(), which reads every value that is not false as true: a
+      // property left null or blank in a hand-edited flow would otherwise unlock the
+      // endpoint. Only an explicit true, or the string a checkbox can serialise to, opts in.
+      const optIn: any = config.allowDynamic;
+      if (init) node.allowDynamic = optIn === true || optIn === "true";
 
       // A NaN from a non-numeric override would poison every later comparison.
       const numericDefaults: Record<string, number> = {
@@ -375,16 +393,25 @@ module.exports = function (RED: any) {
       const isCurrent = (): boolean => node._attemptId === attempt && !node._closing;
       node._broadcast("cip:connecting");
 
-      // Without this a caller waiting on the callback can hang indefinitely if the
-      // underlying connect never settles. It releases the waiters only; connection state
-      // is still driven by the attempt itself.
-      const budget = Math.max(1000, node.connTimeout * 2);
+      // Last resort for a connect that never settles at all. It has to abandon the whole
+      // attempt, not just release the waiters: leaving `connecting` set wedges the
+      // endpoint for good, because every later connect() joins the in-flight attempt and
+      // returns without arming a watchdog of its own, so its callback never fires and no
+      // message against this endpoint ever completes.
+      //
+      // The budget sits clear of the library's own timeouts (see LIB_SESSION_TIMEOUT) so
+      // this can only ever fire for an attempt that is genuinely stuck, never for a slow
+      // controller still working through its handshake and tag list.
+      const budget = LIB_SESSION_TIMEOUT + Math.max(2000, node.connTimeout * 4);
       const watchdog = setTimeout(() => {
-        if (isCurrent() && node._connectWaiters.length) {
-          node._settleConnect(
-            new Error(`Timed out connecting to ${node.address}:${node.port} after ${budget}ms`)
-          );
-        }
+        if (!isCurrent()) return;
+        // Retire the attempt first, so its own callbacks bow out via isCurrent() if the
+        // underlying promise ever does settle.
+        node._attemptId++;
+        node._onConnectFailed(
+          new Error(`Timed out connecting to ${node.address}:${node.port} after ${budget}ms`),
+          node.plc
+        );
       }, budget);
 
       const onSettled = (): void => clearTimeout(watchdog);

@@ -179,6 +179,16 @@ describe("options", () => {
     expect(makeEndpoint({ allowDynamic: true }).allowDynamic).toBe(true);
   });
 
+  it("leaves allowDynamic off for every value that is not an explicit true", () => {
+    // The gate has to fail closed. A blank, zero or null property in a hand-edited flow
+    // must not unlock runtime control of the connection.
+    for (const value of [undefined, null, false, "", 0, "false", "no"]) {
+      expect(makeEndpoint({ allowDynamic: value }).allowDynamic).toBe(false);
+    }
+    // A checkbox can serialise to the string form, which does opt in.
+    expect(makeEndpoint({ allowDynamic: "true" }).allowDynamic).toBe(true);
+  });
+
   it("raises maxRetryInterval to at least retryInterval", () => {
     expect(makeEndpoint({ retryInterval: 5000, maxRetryInterval: 1000 }).maxRetryInterval).toBe(5000);
   });
@@ -400,6 +410,71 @@ describe("connect and disconnect", () => {
     await flush();
     expect(node.connected).toBe(false);
     expect(node.plc).toBeNull();
+  });
+
+  describe("a connect that never settles", () => {
+    // The watchdog has to release the endpoint, not just the waiters. Real timers would
+    // mean waiting out the full budget, which is deliberately sized past the library's
+    // own 10s session timeout.
+    const runWatchdog = async (node: any, budget: number) => {
+      jest.advanceTimersByTime(budget);
+      // Let _onConnectFailed's async teardown run.
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it("gives up and leaves the endpoint connectable again", async () => {
+      control.connectResult = "hang";
+      const node = makeEndpoint({ connTimeout: 1000 });
+      const budget = 10000 + 4000;
+
+      const first = jest.fn();
+      node.connect(first);
+      expect(node.connecting).toBe(true);
+
+      await runWatchdog(node, budget);
+
+      expect(first).toHaveBeenCalledTimes(1);
+      expect(first.mock.calls[0][0]).toBeInstanceOf(Error);
+      // The regression: leaving this set makes every later connect() join a dead attempt.
+      expect(node.connecting).toBe(false);
+      expect(node.canConnect()).toBe(true);
+      expect(node.plc).toBeNull();
+      expect(control.created[0].destroyed).toBe(true);
+    });
+
+    it("still settles a caller that arrives after it has given up", async () => {
+      control.connectResult = "hang";
+      const node = makeEndpoint({ connTimeout: 1000 });
+      const budget = 10000 + 4000;
+
+      node.connect(jest.fn());
+      await runWatchdog(node, budget);
+
+      // Before the fix this waiter was queued against the wedged attempt and never fired,
+      // so the Node-RED message behind it never completed.
+      const second = jest.fn();
+      node.connect(second);
+      await runWatchdog(node, budget);
+      expect(second).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not fire while the library is still within its own timeouts", async () => {
+      control.connectResult = "hang";
+      const node = makeEndpoint({ connTimeout: 1000 });
+
+      const cb = jest.fn();
+      node.connect(cb);
+      // Past the old budget (connTimeout * 2), still inside the library's 10s session
+      // handshake: a slow controller must not be torn down here.
+      jest.advanceTimersByTime(2000);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      expect(cb).not.toHaveBeenCalled();
+      expect(node.connecting).toBe(true);
+    });
   });
 });
 
