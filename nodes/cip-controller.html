@@ -44,7 +44,7 @@
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload.name <span class="property-type">string</span></dt>
-    <dd>Controller name (project name).</dd>
+    <dd>Product name from the Identity object, for example <code>2080-L50E-24QBB</code>.</dd>
     <dt>payload.serial <span class="property-type">string</span></dt>
     <dd>Controller serial number.</dd>
     <dt>payload.firmware <span class="property-type">object</span></dt>
@@ -53,9 +53,13 @@
     <dd>Identity numbers of the device.</dd>
     <dt>payload.status <span class="property-type">object</span></dt>
     <dd><code>runMode</code>, <code>faulted</code>, <code>majorFault</code>, <code>minorFault</code>
-    and <code>ioFault</code>, decoded from the controller status word.</dd>
+    and <code>ioFault</code>, decoded from the Identity status word, read fresh each time.
+    <code>runMode</code> is <code>"run"</code>, <code>"program"</code> or <code>"unknown"</code>.
+    A Micro800's status word is the same in Run and Program, so its mode comes from the
+    Identity State attribute instead.</dd>
     <dt>payload.keyswitch <span class="property-type">string</span></dt>
-    <dd><code>"run"</code>, <code>"program"</code>, <code>"remote"</code> or <code>"unknown"</code>.</dd>
+    <dd><code>"run"</code>, <code>"program"</code>, <code>"remote"</code> or <code>"unknown"</code>.
+    Only Logix controllers report it; a Micro800 reads as <code>"unknown"</code>.</dd>
     <dt>payload.tagCount <span class="property-type">number</span></dt>
     <dd>Number of tags in the controller tag list.</dd>
     <dt>payload.time <span class="property-type">Date</span></dt>

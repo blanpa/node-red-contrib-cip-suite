@@ -1,7 +1,7 @@
 /**
  * CIP Controller node -- reads and outputs PLC controller properties and status.
- * Supports periodic polling and trigger-based reads.
- * Can issue runtime commands (run/program/test/reset).
+ * Supports periodic polling and trigger-based reads. Mode change and reset commands are
+ * refused: CIP offers no supported way to send them.
  * @module cip-controller
  */
 
@@ -22,20 +22,29 @@ import {
   applyInitialStatus
 } from "./endpoint-dynamic";
 
-/** Controller run mode status bit masks (CIP Identity Object, Attribute 5). */
+/**
+ * Run mode, from the extended device status (bits 4-7) of the Identity Status word.
+ * Logix reports 0x6 in Run and 0x7 in Program.
+ */
 const RUN_MODE_MAP: Record<number, string> = {
-  0x0000: "unknown",
-  0x0010: "run",
-  0x0020: "program",
-  0x0030: "test",
+  0x6: "run",
+  0x7: "program",
 };
 
-/** Keyswitch positions. */
+/**
+ * Run mode, from the Identity State attribute (8), for controllers whose Status word does
+ * not carry it. A Micro800 reports Operational (3) in Run and Standby (2) in Program.
+ */
+const STATE_RUN_MODE_MAP: Record<number, string> = {
+  2: "program",
+  3: "run",
+};
+
+/** Keyswitch position, from bits 12-13 of the Status word (Logix only). */
 const KEYSWITCH_MAP: Record<number, string> = {
-  0x0000: "unknown",
-  0x0001: "remote",
-  0x0002: "run",
-  0x0003: "program",
+  1: "run",
+  2: "program",
+  3: "remote",
 };
 
 interface ControllerStatus {
@@ -47,39 +56,113 @@ interface ControllerStatus {
 }
 
 /**
- * Parse the numeric controller status word into structured fields.
- * The status word format (Logix5000):
- *   Bits 4-5: run mode (00=unknown, 01=run, 10=program, 11=test)
- *   Bit 2: major fault
- *   Bit 3: minor fault
- *   Bit 8: I/O fault
- *   Bit 1: faulted
+ * Parse the Identity object's Status word (attribute 5) and State (attribute 8).
+ *   Bits 4-7: extended device status (0x2 = a faulted I/O connection; run mode above)
+ *   Bits 8-9: minor recoverable / unrecoverable fault
+ *   Bits 10-11: major recoverable / unrecoverable fault
+ *   State 4 / 5: major recoverable / unrecoverable fault
  */
-function parseControllerStatus(statusWord: number): ControllerStatus {
-  const runModeField = statusWord & 0x0030;
+function parseControllerStatus(statusWord: number, state?: number): ControllerStatus {
+  const extended = (statusWord >> 4) & 0x0f;
+  const minorFault = (statusWord & 0x0300) !== 0;
+  const majorFault = (statusWord & 0x0c00) !== 0 || state === 4 || state === 5;
+  const runMode =
+    RUN_MODE_MAP[extended] || (state !== undefined && STATE_RUN_MODE_MAP[state]) || "unknown";
   return {
-    runMode: RUN_MODE_MAP[runModeField] || "unknown",
-    faulted: (statusWord & 0x0002) !== 0,
-    majorFault: (statusWord & 0x0004) !== 0,
-    minorFault: (statusWord & 0x0008) !== 0,
-    ioFault: (statusWord & 0x0100) !== 0,
+    runMode,
+    faulted: minorFault || majorFault,
+    majorFault,
+    minorFault,
+    ioFault: extended === 0x2,
   };
 }
 
+function parseKeyswitch(statusWord: number): string {
+  return KEYSWITCH_MAP[(statusWord >> 12) & 0x03] || "unknown";
+}
+
+interface Identity {
+  vendorId?: number;
+  deviceType?: number;
+  productCode?: number;
+  major?: number;
+  minor?: number;
+  status?: number;
+  serial?: number;
+  name?: string;
+  state?: number;
+}
+
+/** The value of a successful reply, or null. A Micro800 answers with service 0xD2. */
+function replyData(reply: Buffer): Buffer | null {
+  if (reply.length < 4 || reply.readUInt8(2) !== 0) return null;
+  return reply.subarray(4 + reply.readUInt8(3) * 2);
+}
+
 /**
- * Try to extract a value from multiple possible property paths.
+ * Parse a Get_Attribute_All reply from the Identity object: attributes 1-7 in order, then
+ * State (8) when the device includes it.
  */
-function tryGet(obj: any, ...paths: string[]): any {
-  for (const path of paths) {
-    const parts = path.split(".");
-    let current = obj;
-    for (const p of parts) {
-      if (current == null) break;
-      current = current[p];
-    }
-    if (current !== undefined && current !== null) return current;
+function parseIdentityAll(data: Buffer): Identity | null {
+  if (data.length < 15) return null;
+  const nameLen = data.readUInt8(14);
+  if (data.length < 15 + nameLen) return null;
+  const identity: Identity = {
+    vendorId: data.readUInt16LE(0),
+    deviceType: data.readUInt16LE(2),
+    productCode: data.readUInt16LE(4),
+    major: data.readUInt8(6),
+    minor: data.readUInt8(7),
+    status: data.readUInt16LE(8),
+    serial: data.readUInt32LE(10),
+    name: data.subarray(15, 15 + nameLen).toString("latin1"),
+  };
+  if (data.length > 15 + nameLen) identity.state = data.readUInt8(15 + nameLen);
+  return identity;
+}
+
+/**
+ * Read the Identity object through the endpoint. st-ethernet-ip reads it on connect, but
+ * not on a Micro800: it skips the read there, and would time out anyway, because the
+ * Micro800 answers with service 0xD2 instead of 0x81. Get_Attribute_All first, then one
+ * Get_Attribute_Single per attribute for a device that refuses it. An attribute the
+ * device refuses is left out.
+ */
+async function readIdentity(endpoint: any): Promise<Identity> {
+  if (typeof endpoint.request !== "function") return {};
+
+  // Get_Attribute_All, path: class 0x01, instance 1
+  const all = replyData(await endpoint.request(Buffer.from([0x01, 0x02, 0x20, 0x01, 0x24, 0x01])));
+  const parsed = all && parseIdentityAll(all);
+  if (parsed) return parsed;
+
+  const identity: Identity = {};
+  // Get_Attribute_Single, path: class 0x01, instance 1, attribute id
+  const attr = async (id: number): Promise<Buffer | null> =>
+    replyData(await endpoint.request(Buffer.from([0x0e, 0x03, 0x20, 0x01, 0x24, 0x01, 0x30, id])));
+
+  const vendor = await attr(1);
+  if (vendor && vendor.length >= 2) identity.vendorId = vendor.readUInt16LE(0);
+  const deviceType = await attr(2);
+  if (deviceType && deviceType.length >= 2) identity.deviceType = deviceType.readUInt16LE(0);
+  const productCode = await attr(3);
+  if (productCode && productCode.length >= 2) identity.productCode = productCode.readUInt16LE(0);
+  const revision = await attr(4);
+  if (revision && revision.length >= 2) {
+    identity.major = revision.readUInt8(0);
+    identity.minor = revision.readUInt8(1);
   }
-  return undefined;
+  const status = await attr(5);
+  if (status && status.length >= 2) identity.status = status.readUInt16LE(0);
+  const serial = await attr(6);
+  if (serial && serial.length >= 4) identity.serial = serial.readUInt32LE(0);
+  const name = await attr(7);
+  if (name && name.length >= 1) {
+    identity.name = name.subarray(1, 1 + name.readUInt8(0)).toString("latin1");
+  }
+  const state = await attr(8);
+  if (state && state.length >= 1) identity.state = state.readUInt8(0);
+  return identity;
 }
 
 module.exports = function (RED: any) {
@@ -142,55 +225,38 @@ module.exports = function (RED: any) {
           return;
         }
 
-        // Gather properties from controller.state / controller.properties
-        const state = controller.state || controller.properties || {};
-        const stateKeys = Object.keys(state);
-        node.debug(`Controller state keys: ${stateKeys.join(", ")}`);
+        // Read the Identity object now, so the status is current. If the controller
+        // answers none of it, fall back to what st-ethernet-ip read on connect, which it
+        // keeps in controller.properties (state.controller). A Micro800 connection skips
+        // that read, and it only fills in name, serial, version and status.
+        const identity = await readIdentity(endpoint);
+        const props = controller.properties || controller.state?.controller || {};
 
-        const name: string = tryGet(state, "name", "productName", "product_name") ||
-          tryGet(controller, "state.name", "properties.name") || "Unknown";
+        const name: string = identity.name || props.name || "Unknown";
 
-        const serialRaw = tryGet(state, "serial_number", "serialNumber", "serial") ||
-          tryGet(controller, "state.serial_number") || 0;
+        const serialRaw = identity.serial ?? props.serial_number ?? 0;
         const serial: string = typeof serialRaw === "number"
           ? serialRaw.toString(16).toUpperCase().padStart(8, "0")
           : String(serialRaw);
 
-        const versionRaw = tryGet(state, "version", "revision", "major_rev");
         let firmware: { major: number; minor: number };
-        if (typeof versionRaw === "string" && versionRaw.includes(".")) {
-          const parts = versionRaw.split(".");
-          firmware = { major: parseInt(parts[0], 10) || 0, minor: parseInt(parts[1], 10) || 0 };
-        } else if (typeof versionRaw === "number") {
-          const majorRev = tryGet(state, "major_rev", "majorRevision") || versionRaw;
-          const minorRev = tryGet(state, "minor_rev", "minorRevision") || 0;
-          firmware = { major: majorRev, minor: minorRev };
+        if (identity.major !== undefined) {
+          firmware = { major: identity.major, minor: identity.minor ?? 0 };
         } else {
-          const majorRev = tryGet(state, "major_rev", "majorRevision") || 0;
-          const minorRev = tryGet(state, "minor_rev", "minorRevision") || 0;
-          firmware = { major: majorRev, minor: minorRev };
+          const parts = String(props.version || "").split(".");
+          firmware = { major: parseInt(parts[0], 10) || 0, minor: parseInt(parts[1], 10) || 0 };
         }
 
-        const vendorId: number = tryGet(state, "vendor_id", "vendorId") || 0;
-        const deviceType: number = tryGet(state, "device_type", "deviceType") || 0;
-        const productCode: number = tryGet(state, "product_code", "productCode") || 0;
+        const vendorId: number = identity.vendorId ?? 0;
+        const deviceType: number = identity.deviceType ?? 0;
+        const productCode: number = identity.productCode ?? 0;
 
-        const statusWord: number = tryGet(state, "status", "controllerStatus") || 0;
-        const controllerStatus = parseControllerStatus(statusWord);
+        const statusWord: number = identity.status ?? props.status ?? 0;
+        const controllerStatus = parseControllerStatus(statusWord, identity.state);
+        const keyswitch = parseKeyswitch(statusWord);
 
-        // If the controller explicitly exposes faulted, use that
-        const explicitFaulted = tryGet(state, "faulted");
-        if (explicitFaulted !== undefined) {
-          controllerStatus.faulted = Boolean(explicitFaulted);
-        }
-
-        const keyswitchRaw = tryGet(state, "keyswitch", "keyswitchPosition", "keyswitch_position") || 0;
-        const keyswitch: string = typeof keyswitchRaw === "string"
-          ? keyswitchRaw
-          : KEYSWITCH_MAP[keyswitchRaw] || "unknown";
-
-        // Tag count from the controller's tag list
-        const tagList = controller.state?.tagList || controller.tagList || [];
+        // controller.tagList is the array; state.tagList is the TagList holding it.
+        const tagList = controller.tagList || controller.state?.tagList?.tags || [];
         const tagCount: number = Array.isArray(tagList) ? tagList.length : 0;
 
         // Wall clock time (if supported)
@@ -238,8 +304,6 @@ module.exports = function (RED: any) {
           node.status({ fill: "green", shape: "dot", text: "Run" } as NodeStatus);
         } else if (controllerStatus.runMode === "program") {
           node.status({ fill: "yellow", shape: "dot", text: "Program" } as NodeStatus);
-        } else if (controllerStatus.runMode === "test") {
-          node.status({ fill: "blue", shape: "dot", text: "Test" } as NodeStatus);
         } else {
           node.status({ fill: "grey", shape: "dot", text: name } as NodeStatus);
         }
