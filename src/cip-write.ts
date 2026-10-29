@@ -135,6 +135,33 @@ module.exports = function (RED: any) {
     }
 
     /**
+     * The bit width and signedness st-ethernet-ip writes a tag's value back as, so a
+     * software read-modify-write can wrap the modified value to fit. `tag.type` is the
+     * name string the library's getter returns (e.g. "SINT", "UINT"), not a CIP type code.
+     */
+    function getTypeWidth(typeName: any): { bits: number; signed: boolean } {
+      switch (String(typeName)) {
+        case "BOOL":
+        case "SINT":
+          return { bits: 8, signed: true };
+        case "USINT":
+          return { bits: 8, signed: false };
+        case "INT":
+          return { bits: 16, signed: true };
+        case "UINT":
+        case "WORD":
+          return { bits: 16, signed: false };
+        case "DINT":
+          return { bits: 32, signed: true };
+        case "UDINT":
+        case "DWORD":
+          return { bits: 32, signed: false };
+        default:
+          return { bits: 32, signed: true };
+      }
+    }
+
+    /**
      * Write a single tag with support for bit access, array elements, array ranges, and UDTs.
      */
     async function writeSingleTag(tagName: string, value: any, use?: any): Promise<WriteResult> {
@@ -179,8 +206,12 @@ module.exports = function (RED: any) {
         // Software read-modify-write
         const tag = new Tag(parsed.baseName);
         await controller.readTag(tag);
+        if (tag.type === "LINT" || tag.type === "ULINT") {
+          throw new Error(`Bit write on ${tagName} is not supported: ${tag.type} values are 64-bit`);
+        }
         const currentValue = tag.value as number;
-        const newValue = setBit(currentValue, parsed.bitIndex, bitValue);
+        const { bits, signed } = getTypeWidth(tag.type);
+        const newValue = setBit(currentValue, parsed.bitIndex, bitValue, bits, signed);
         tag.value = newValue;
         await controller.writeTag(tag);
 

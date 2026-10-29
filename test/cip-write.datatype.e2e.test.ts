@@ -135,6 +135,31 @@ describe("cip-write Data Type", () => {
   });
 });
 
+describe("cip-write bit access", () => {
+  // Issue: writing the sign bit of a narrow signed type (INT bit 15, SINT bit 7) threw
+  // "value out of range" because the software read-modify-write produced an out-of-range
+  // signed 32-bit number instead of wrapping it back to the tag's own width.
+  it("sets the INT sign bit (bit 15) without overflowing", async () => {
+    const { write: setup } = makeWriteNode({ tagName: "MyInt", dataType: "INT" });
+    await setup({ payload: 576 });
+
+    const { write } = makeWriteNode({ tagName: "MyInt.15" });
+    const msg = await write({ payload: true });
+    expect(msg.payload.success).toBe(true);
+    expect(await readValue("MyInt")).toBe(-32192);
+  });
+
+  it("clears an already-set INT sign bit without overflowing", async () => {
+    const { write: setup } = makeWriteNode({ tagName: "MyInt", dataType: "INT" });
+    await setup({ payload: -30584 });
+
+    const { write } = makeWriteNode({ tagName: "MyInt.15" });
+    const msg = await write({ payload: false });
+    expect(msg.payload.success).toBe(true);
+    expect(await readValue("MyInt")).toBe(2184);
+  });
+});
+
 describe("cip-write UDT", () => {
   async function readStruct(name: string): Promise<any> {
     const tag = plc.newTag(name, null, false);

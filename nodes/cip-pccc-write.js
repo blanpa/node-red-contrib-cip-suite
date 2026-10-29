@@ -87,9 +87,11 @@ module.exports = function (RED) {
             if (typeof currentValue !== "number") {
                 throw new Error(`Cannot perform bit write on non-numeric value at ${addr.displayAddress}`);
             }
-            // Modify the bit
+            // Modify the bit. PCCC words are 16-bit, except LONG (L) files, which are 32-bit;
+            // buildPCCCWriteCommand writes both back as signed (writeInt16LE/writeInt32LE).
             const boolVal = bitValue === true || bitValue === 1 || bitValue === "1" || bitValue === "true";
-            const newValue = (0, utils_1.setBit)(currentValue, addr.bitNumber, boolVal);
+            const bits = addr.fileType === types_1.PCCCFileType.LONG ? 32 : 16;
+            const newValue = (0, utils_1.setBit)(currentValue, addr.bitNumber, boolVal, bits, true);
             // Write modified word back
             const writeData = (0, pccc_utils_1.buildPCCCWriteCommand)(readAddr, newValue);
             await node._endpoint.sendPCCC(pccc_utils_1.PCCC_CMD.TYPED_LOGICAL, pccc_utils_1.PCCC_FNC.TYPED_WRITE_3ADDR, writeData);

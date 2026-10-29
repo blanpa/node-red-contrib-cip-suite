@@ -294,6 +294,40 @@ describe("setBit", () => {
   it("preserves other bits when clearing", () => {
     expect(setBit(0xff, 3, false)).toBe(0xf7);
   });
+
+  // Sign-bit wrap: a JS bitwise op always yields a signed 32-bit result, so setting
+  // the top bit of a narrower signed type must wrap back to that type's own range.
+  it("wraps the INT sign bit (15) when setting", () => {
+    expect(setBit(576, 15, true, 16)).toBe(-32192);
+  });
+
+  it("wraps the INT sign bit (15) on an all-zero value", () => {
+    expect(setBit(0, 15, true, 16)).toBe(-32768);
+  });
+
+  it("wraps the INT sign bit (15) when clearing an already-negative value", () => {
+    expect(setBit(-30584, 15, false, 16)).toBe(2184);
+  });
+
+  it("sets a non-sign INT bit without wrapping", () => {
+    expect(setBit(0, 14, true, 16)).toBe(16384);
+  });
+
+  it("wraps the SINT sign bit (7) when setting", () => {
+    expect(setBit(5, 7, true, 8)).toBe(-123);
+  });
+
+  it("wraps the SINT sign bit (7) when clearing a negative value", () => {
+    expect(setBit(-100, 7, false, 8)).toBe(28);
+  });
+
+  it("wraps the DINT sign bit (31) when setting", () => {
+    expect(setBit(5, 31, true, 32)).toBe(-2147483643);
+  });
+
+  it("does not sign-wrap when the width is explicitly unsigned", () => {
+    expect(setBit(0, 15, true, 16, false)).toBe(32768);
+  });
 });
 
 // ── buildBitMasks ──
