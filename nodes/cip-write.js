@@ -107,6 +107,8 @@ module.exports = function (RED) {
          * The bit width and signedness st-ethernet-ip writes a tag's value back as, so a
          * software read-modify-write can wrap the modified value to fit. `tag.type` is the
          * name string the library's getter returns (e.g. "SINT", "UINT"), not a CIP type code.
+         * Types with no bit-level meaning (REAL, STRING, LINT, …) are refused rather than
+         * treated as a 32-bit integer, which previously corrupted their value.
          */
         function getTypeWidth(typeName) {
             switch (String(typeName)) {
@@ -126,7 +128,7 @@ module.exports = function (RED) {
                 case "DWORD":
                     return { bits: 32, signed: false };
                 default:
-                    return { bits: 32, signed: true };
+                    throw new Error(`Bit access is not supported on ${typeName} tags`);
             }
         }
         /**
@@ -169,12 +171,15 @@ module.exports = function (RED) {
                 // Software read-modify-write
                 const tag = new Tag(parsed.baseName);
                 await controller.readTag(tag);
-                if (tag.type === "LINT" || tag.type === "ULINT") {
-                    throw new Error(`Bit write on ${tagName} is not supported: ${tag.type} values are 64-bit`);
-                }
                 const currentValue = tag.value;
-                const { bits, signed } = getTypeWidth(tag.type);
-                const newValue = (0, utils_1.setBit)(currentValue, parsed.bitIndex, bitValue, bits, signed);
+                let newValue;
+                try {
+                    const { bits, signed } = getTypeWidth(tag.type);
+                    newValue = (0, utils_1.setBit)(currentValue, parsed.bitIndex, bitValue, bits, signed);
+                }
+                catch (err) {
+                    throw new Error(`Bit write on ${tagName}: ${(0, utils_1.describeCipError)(err)}`);
+                }
                 tag.value = newValue;
                 await controller.writeTag(tag);
                 return {

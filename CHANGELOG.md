@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **cip-write, cip-pccc-write** — **Bit writes on the sign bit failed.** Setting or clearing
+  bit 15 of an INT or bit 7 of a SINT (e.g. `MyInt.15`, `N7:0/15`) threw "value out of range":
+  the modified value was a signed 32-bit number that was not wrapped back to the tag's width.
+  It is now wrapped to the tag's own width and signedness. Verified on a 1769-L36ERM (v30). (#34)
+- **cip-write, cip-pccc-write** — **Bit index past the tag's width** (e.g. `MyInt.16`,
+  `N7:0/16`) now fails with a clear error.
+- **cip-write** — **Bit access on non-integer tags** (REAL, STRING, LINT, …) now fails with a
+  clear error. Before, `MyReal.3 = true` treated the REAL as a 32-bit integer and wrote a
+  wrong value.
+
 ## 0.2.0 — 2026-10-13
 
 Thanks to [@Steve-Mcl](https://github.com/Steve-Mcl) for the detailed reports behind most

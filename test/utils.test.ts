@@ -328,6 +328,28 @@ describe("setBit", () => {
   it("does not sign-wrap when the width is explicitly unsigned", () => {
     expect(setBit(0, 15, true, 16, false)).toBe(32768);
   });
+
+  // A bit index past the tag's width used to be silently accepted (wrapToWidth masked it
+  // away), so e.g. MyInt.16 reported success and left the value unchanged.
+  it("throws when the bit index is past a 16-bit value's width", () => {
+    expect(() => setBit(0, 16, true, 16)).toThrow(RangeError);
+  });
+
+  it("throws when the bit index is past an 8-bit value's width", () => {
+    expect(() => setBit(0, 8, true, 8)).toThrow(RangeError);
+  });
+
+  it("throws when the bit index is past a 32-bit value's width", () => {
+    expect(() => setBit(0, 32, true, 32)).toThrow(RangeError);
+  });
+
+  it("throws on a negative bit index", () => {
+    expect(() => setBit(0, -1, true, 16)).toThrow(RangeError);
+  });
+
+  it("still allows the highest valid bit index (boundary)", () => {
+    expect(setBit(0, 15, true, 16)).toBe(-32768);
+  });
 });
 
 // ── buildBitMasks ──

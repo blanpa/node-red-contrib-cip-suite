@@ -285,6 +285,9 @@ export function setBit(
   bits = 32,
   signed = true
 ): number {
+  if (!Number.isInteger(bitIndex) || bitIndex < 0 || bitIndex >= bits) {
+    throw new RangeError(`Bit ${bitIndex} is out of range for a ${bits}-bit value (0-${bits - 1})`);
+  }
   const result = bitValue ? value | (1 << bitIndex) : value & ~(1 << bitIndex);
   return wrapToWidth(result, bits, signed);
 }

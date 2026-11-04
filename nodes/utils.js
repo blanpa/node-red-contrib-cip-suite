@@ -234,6 +234,9 @@ function wrapToWidth(value, bits, signed = true) {
  * result is valid for the signed/unsigned N-bit field it will be written back into.
  */
 function setBit(value, bitIndex, bitValue, bits = 32, signed = true) {
+    if (!Number.isInteger(bitIndex) || bitIndex < 0 || bitIndex >= bits) {
+        throw new RangeError(`Bit ${bitIndex} is out of range for a ${bits}-bit value (0-${bits - 1})`);
+    }
     const result = bitValue ? value | (1 << bitIndex) : value & ~(1 << bitIndex);
     return wrapToWidth(result, bits, signed);
 }

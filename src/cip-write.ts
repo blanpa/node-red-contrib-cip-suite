@@ -138,6 +138,8 @@ module.exports = function (RED: any) {
      * The bit width and signedness st-ethernet-ip writes a tag's value back as, so a
      * software read-modify-write can wrap the modified value to fit. `tag.type` is the
      * name string the library's getter returns (e.g. "SINT", "UINT"), not a CIP type code.
+     * Types with no bit-level meaning (REAL, STRING, LINT, …) are refused rather than
+     * treated as a 32-bit integer, which previously corrupted their value.
      */
     function getTypeWidth(typeName: any): { bits: number; signed: boolean } {
       switch (String(typeName)) {
@@ -157,7 +159,7 @@ module.exports = function (RED: any) {
         case "DWORD":
           return { bits: 32, signed: false };
         default:
-          return { bits: 32, signed: true };
+          throw new Error(`Bit access is not supported on ${typeName} tags`);
       }
     }
 
@@ -206,12 +208,14 @@ module.exports = function (RED: any) {
         // Software read-modify-write
         const tag = new Tag(parsed.baseName);
         await controller.readTag(tag);
-        if (tag.type === "LINT" || tag.type === "ULINT") {
-          throw new Error(`Bit write on ${tagName} is not supported: ${tag.type} values are 64-bit`);
-        }
         const currentValue = tag.value as number;
-        const { bits, signed } = getTypeWidth(tag.type);
-        const newValue = setBit(currentValue, parsed.bitIndex, bitValue, bits, signed);
+        let newValue: number;
+        try {
+          const { bits, signed } = getTypeWidth(tag.type);
+          newValue = setBit(currentValue, parsed.bitIndex, bitValue, bits, signed);
+        } catch (err: any) {
+          throw new Error(`Bit write on ${tagName}: ${describeCipError(err)}`);
+        }
         tag.value = newValue;
         await controller.writeTag(tag);
 
