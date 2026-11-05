@@ -1,9 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-11-05
+
+Thanks to [@QvixoteRoux](https://github.com/QvixoteRoux) and [@Steve-Mcl](https://github.com/Steve-Mcl)
+for the fixes in this release (#33, #35).
+
+Tested with unit tests and end-to-end against the bundled simulator. The bit-write fixes were
+verified on a 1769-L36ERM (v30), the cip-controller fixes on a Micro850. **The cip-controller
+status decode for Logix is not yet tested on a real Logix controller.**
 
 ### Fixed
 
+- **cip-controller** — **Identity read as "Unknown" and zeros on a Micro800, and partly as 0
+  on Logix.** The node looked for the identity in the wrong place in st-ethernet-ip's state,
+  and on a Micro800 nothing read it at all. It now reads the Identity object itself on every
+  status read (Get_Attribute_All, falling back to Get_Attribute_Single), so name, serial,
+  firmware, vendor ID, device type and product code are filled in. (#32)
+- **cip-controller** — **The status word was decoded wrongly.** `runMode` now comes from the
+  extended device status on Logix (0x6 Run, 0x7 Program) and from the State attribute on a
+  Micro800, whose status word does not change with its mode. Faults come from bits 8–11 and
+  `keyswitch` from bits 12–13 (Logix only; a Micro800 reads as `"unknown"`). Bit 2 is
+  "Configured" and no longer reads as a major fault. On non-Rockwell CIP devices bits 12–15
+  are vendor-specific, so `keyswitch` can be wrong there. (#32)
+- **cip-controller** — **`tagCount` was always 0.** It now counts the tag list. (#32)
 - **cip-write, cip-pccc-write** — **Bit writes on the sign bit failed.** Setting or clearing
   bit 15 of an INT or bit 7 of a SINT (e.g. `MyInt.15`, `N7:0/15`) threw "value out of range":
   the modified value was a signed 32-bit number that was not wrapped back to the tag's width.
