@@ -135,6 +135,56 @@ describe("cip-write Data Type", () => {
   });
 });
 
+describe("cip-write bit access", () => {
+  // Issue: writing the sign bit of a narrow signed type (INT bit 15, SINT bit 7) threw
+  // "value out of range" because the software read-modify-write produced an out-of-range
+  // signed 32-bit number instead of wrapping it back to the tag's own width.
+  it("sets the INT sign bit (bit 15) without overflowing", async () => {
+    const { write: setup } = makeWriteNode({ tagName: "MyInt", dataType: "INT" });
+    await setup({ payload: 576 });
+
+    const { write } = makeWriteNode({ tagName: "MyInt.15" });
+    const msg = await write({ payload: true });
+    expect(msg.payload.success).toBe(true);
+    expect(await readValue("MyInt")).toBe(-32192);
+  });
+
+  it("clears an already-set INT sign bit without overflowing", async () => {
+    const { write: setup } = makeWriteNode({ tagName: "MyInt", dataType: "INT" });
+    await setup({ payload: -30584 });
+
+    const { write } = makeWriteNode({ tagName: "MyInt.15" });
+    const msg = await write({ payload: false });
+    expect(msg.payload.success).toBe(true);
+    expect(await readValue("MyInt")).toBe(2184);
+  });
+
+  // Issue #34: a bit index past the tag's width used to be silently accepted and left the
+  // value unchanged while still reporting success.
+  it("fails a bit index past the tag's width instead of silently doing nothing", async () => {
+    const { write: setup } = makeWriteNode({ tagName: "MyInt", dataType: "INT" });
+    await setup({ payload: 576 });
+
+    const { write } = makeWriteNode({ tagName: "MyInt.16" });
+    const msg = await write({ payload: true });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toMatch(/out of range|bit/i);
+    expect(await readValue("MyInt")).toBe(576);
+  });
+
+  // Issue #34: bit access on a non-integer tag used to fall back to treating it as a
+  // 32-bit integer, corrupting the value (3.14 -> 11).
+  it("fails bit access on a REAL tag instead of corrupting its value", async () => {
+    const { write: setup } = makeWriteNode({ tagName: "MyReal", dataType: "REAL" });
+    await setup({ payload: 3.14 });
+
+    const { write } = makeWriteNode({ tagName: "MyReal.3" });
+    const msg = await write({ payload: true });
+    expect(msg.payload.success).toBe(false);
+    expect(await readValue("MyReal")).toBeCloseTo(3.14, 5);
+  });
+});
+
 describe("cip-write UDT", () => {
   async function readStruct(name: string): Promise<any> {
     const tag = plc.newTag(name, null, false);

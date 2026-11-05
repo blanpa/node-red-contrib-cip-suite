@@ -12,6 +12,7 @@ exports.findTagListEntry = findTagListEntry;
 exports.canonicalizeTagName = canonicalizeTagName;
 exports.resolveMemberInfo = resolveMemberInfo;
 exports.getBit = getBit;
+exports.wrapToWidth = wrapToWidth;
 exports.setBit = setBit;
 exports.buildBitMasks = buildBitMasks;
 exports.cipStatusText = cipStatusText;
@@ -216,15 +217,28 @@ function getBit(value, bitIndex) {
     return ((value >>> bitIndex) & 1) === 1;
 }
 /**
- * Set a specific bit in an integer value.
+ * Wrap a JS integer to how it would read back as an N-bit signed or unsigned value.
+ * JS bitwise ops always produce a signed 32-bit result, so setting bit 15 of an INT
+ * (bits = 16) yields e.g. 33344, which is correct as a 32-bit number but out of range
+ * for the 16-bit field it has to be written into.
  */
-function setBit(value, bitIndex, bitValue) {
-    if (bitValue) {
-        return value | (1 << bitIndex);
+function wrapToWidth(value, bits, signed = true) {
+    if (bits >= 32)
+        return signed ? value | 0 : value >>> 0;
+    const mask = (1 << bits) - 1;
+    const v = value & mask;
+    return signed && (v & (1 << (bits - 1))) !== 0 ? v - (1 << bits) : v;
+}
+/**
+ * Set a specific bit in an integer value, wrapped to the tag's actual width so the
+ * result is valid for the signed/unsigned N-bit field it will be written back into.
+ */
+function setBit(value, bitIndex, bitValue, bits = 32, signed = true) {
+    if (!Number.isInteger(bitIndex) || bitIndex < 0 || bitIndex >= bits) {
+        throw new RangeError(`Bit ${bitIndex} is out of range for a ${bits}-bit value (0-${bits - 1})`);
     }
-    else {
-        return value & ~(1 << bitIndex);
-    }
+    const result = bitValue ? value | (1 << bitIndex) : value & ~(1 << bitIndex);
+    return wrapToWidth(result, bits, signed);
 }
 /**
  * Build OR/AND masks for Read-Modify-Write service (0x4E).
