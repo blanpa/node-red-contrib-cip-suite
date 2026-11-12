@@ -4,7 +4,14 @@
  * @module tags
  */
 
-const { FIS_STATION, FIS_STN_COUNT, buildFisStnData } = require("./udt");
+const {
+  FIS_STATION,
+  FIS_STN_COUNT,
+  STRING,
+  NODERED_UDT,
+  buildFisStnData,
+  buildStringData,
+} = require("./udt");
 
 // CIP data type codes (matching st-ethernet-ip expectations)
 const CIP_TYPES = {
@@ -88,6 +95,18 @@ function createControlLogixTags() {
   // UDT: array of stations, each holding a nested UDT of long arrays.
   // Reproduces the tag shape from issue #4.
   tags.set("FIS_Stn", structTag("FIS_Stn", FIS_STATION, FIS_STN_COUNT, buildFisStnData()));
+
+  // STRING, on its own and as UDT members (issue #36).
+  tags.set("MyString", structTag("MyString", STRING, 1, buildStringData("hello")));
+  tags.set(
+    "testVarUDT",
+    structTag(
+      "testVarUDT",
+      NODERED_UDT,
+      1,
+      Buffer.concat([buildStringData("one"), buildStringData("two"), Buffer.from([12, 0, 0, 0])])
+    )
+  );
 
   // Extended types
   tags.set("MyLint", tag("MyLint", CIP_TYPES.LINT, "LINT", 123456789));
