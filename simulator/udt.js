@@ -28,9 +28,10 @@ const STRUCT_TYPE = 0x02a0;
  * @param {string} name - UDT name as reported by the controller
  * @param {number} structureHandle - opaque handle echoed in struct read replies
  * @param {Array<{name: string, type?: number, template?: object, count?: number}>} memberSpecs
+ * @param {number} [structureSize] - total size when the controller pads past the last member
  * @returns {object} template
  */
-function defineTemplate(id, name, structureHandle, memberSpecs) {
+function defineTemplate(id, name, structureHandle, memberSpecs, structureSize) {
   let offset = 0;
   const members = memberSpecs.map((spec) => {
     const count = spec.count || 1;
@@ -52,7 +53,7 @@ function defineTemplate(id, name, structureHandle, memberSpecs) {
     return member;
   });
 
-  return { id, name, structureHandle, structureSize: offset, members };
+  return { id, name, structureHandle, structureSize: structureSize || offset, members };
 }
 
 /** Type word as it appears in a template member entry and in the tag list. */
@@ -138,9 +139,46 @@ const FIS_STATION = defineTemplate(0x0302, "FIS_STATION", 0x4d19, [
   { name: "Local", template: FIS_LOCAL },
 ]);
 
+// ─── STRING and a UDT holding STRING members ────────────────────────
+//
+// Logix holds STRING as a structure: a DINT length, 82 characters, padded to 88
+// bytes. NodeRed_UDT is the shape from issue #36.
+
+const STRING = defineTemplate(
+  0x0fce,
+  "STRING",
+  0x0fce,
+  [
+    { name: "LEN", type: 0xc4 },
+    { name: "DATA", type: 0xc2, count: 82 },
+  ],
+  88
+);
+
+const NODERED_UDT = defineTemplate(0x0303, "NodeRed_UDT", 0x4d1a, [
+  { name: "testVar1", template: STRING },
+  { name: "testVar2", template: STRING },
+  { name: "testVar3", type: 0xc3 },
+  { name: "pad", type: 0xc3 },
+]);
+
+/**
+ * The bytes of a STRING holding `text`.
+ * @param {string} text
+ * @returns {Buffer}
+ */
+function buildStringData(text) {
+  const buf = Buffer.alloc(STRING.structureSize);
+  buf.writeUInt32LE(Buffer.byteLength(text), 0);
+  buf.write(text, 4);
+  return buf;
+}
+
 const TEMPLATES = new Map([
   [FIS_LOCAL.id, FIS_LOCAL],
   [FIS_STATION.id, FIS_STATION],
+  [STRING.id, STRING],
+  [NODERED_UDT.id, NODERED_UDT],
 ]);
 
 /** Number of FIS_Stn elements the simulator publishes. */
@@ -176,7 +214,10 @@ module.exports = {
   FIS_LOCAL,
   FIS_STATION,
   FIS_STN_COUNT,
+  STRING,
+  NODERED_UDT,
   buildFisStnData,
+  buildStringData,
   defineTemplate,
   encodeTemplateAttributes,
   encodeTemplateDefinition,

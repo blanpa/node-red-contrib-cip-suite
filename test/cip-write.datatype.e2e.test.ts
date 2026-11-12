@@ -222,3 +222,79 @@ describe("cip-write UDT", () => {
     expect(msg.payload.error).toBe("Nope is not a member of the UDT");
   });
 });
+
+// Issue #36: Logix holds STRING as a structure, so a text payload reached the atomic
+// write and failed with "Unrecognized Type to Write to Controller: 672".
+describe("cip-write STRING", () => {
+  async function readStruct(name: string): Promise<any> {
+    const tag = plc.newTag(name, null, false);
+    await plc.readTag(tag);
+    return tag.value;
+  }
+
+  it.each(["auto", "STRING"])("writes text to a STRING tag (Data Type %s)", async (dataType) => {
+    const { write } = makeWriteNode({ tagName: "MyString", dataType });
+    const msg = await write({ payload: `text ${dataType}` });
+    expect(msg.payload.success).toBe(true);
+    expect(await readStruct("MyString")).toBe(`text ${dataType}`);
+  });
+
+  it("writes a STRING member by its path and leaves the other members alone", async () => {
+    const before = await readStruct("testVarUDT");
+    const { write } = makeWriteNode({ tagName: "testVarUDT.testVar1", dataType: "auto" });
+    const msg = await write({ payload: "test" });
+    expect(msg.payload.success).toBe(true);
+    expect(await readStruct("testVarUDT")).toEqual({ ...before, testVar1: "test" });
+  });
+
+  it("writes an empty string", async () => {
+    const { write } = makeWriteNode({ tagName: "MyString", dataType: "auto" });
+    const msg = await write({ payload: "" });
+    expect(msg.payload.success).toBe(true);
+    expect(await readStruct("MyString")).toBe("");
+  });
+
+  it("keeps non-ASCII text whole", async () => {
+    const { write } = makeWriteNode({ tagName: "MyString", dataType: "auto" });
+    const msg = await write({ payload: "Grüße" });
+    expect(msg.payload.success).toBe(true);
+    expect(await readStruct("MyString")).toBe("Grüße");
+  });
+
+  it("fills the string to its last character", async () => {
+    const text = "x".repeat(82);
+    const { write } = makeWriteNode({ tagName: "MyString", dataType: "auto" });
+    const msg = await write({ payload: text });
+    expect(msg.payload.success).toBe(true);
+    expect(await readStruct("MyString")).toBe(text);
+  });
+
+  it("refuses text longer than the string instead of truncating it", async () => {
+    const { write: setup } = makeWriteNode({ tagName: "MyString", dataType: "auto" });
+    await setup({ payload: "kept" });
+
+    const { write } = makeWriteNode({ tagName: "MyString", dataType: "auto" });
+    const msg = await write({ payload: "x".repeat(83) });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("MyString holds 82 characters, but the text is 83 long");
+    expect(await readStruct("MyString")).toBe("kept");
+  });
+
+  it("refuses text for a UDT that is not a STRING", async () => {
+    const { write } = makeWriteNode({ tagName: "testVarUDT", dataType: "auto" });
+    const msg = await write({ payload: "test" });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe(
+      "testVarUDT is a UDT, not a STRING, so it cannot be written as text"
+    );
+  });
+
+  it("still writes STRING members through the parent UDT", async () => {
+    const { write } = makeWriteNode({ tagName: "testVarUDT", dataType: "auto" });
+    const msg = await write({ payload: { testVar2: "ABC123", testVar3: 7 } });
+    expect(msg.payload.success).toBe(true);
+    const after = await readStruct("testVarUDT");
+    expect(after.testVar2).toBe("ABC123");
+    expect(after.testVar3).toBe(7);
+  });
+});

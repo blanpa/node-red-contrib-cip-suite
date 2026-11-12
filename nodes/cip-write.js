@@ -27,6 +27,15 @@ const DATA_TYPE_MATCHES = {
     REAL: ["REAL"],
     STRING: ["STRING", "SHORT_STRING", "STRING2", "STRINGN", "STRINGI", "STRUCT"],
 };
+/**
+ * How many bytes of text a Logix string template holds: the length of its DATA member
+ * (82 for STRING, whatever was chosen for a user-defined string type). Null when the
+ * template does not say.
+ */
+function stringCapacity(template) {
+    const size = template?._members?.[1]?.info;
+    return typeof size === "number" && size > 0 ? size : null;
+}
 module.exports = function (RED) {
     function CipWriteNode(config) {
         RED.nodes.createNode(this, config);
@@ -220,21 +229,44 @@ module.exports = function (RED) {
             const tag = new Tag(fullName);
             await controller.readTag(tag); // init type
             checkDataType(tag, tagName);
-            // UDT write. Tag.type is the type name, so a structure reads as "STRUCT".
-            if (tag.type === "STRUCT" && (0, utils_1.isPlainObject)(value)) {
+            // Structure write. Tag.type is the type name, so a structure reads as "STRUCT". Logix
+            // holds STRING as a structure too (LEN + DATA), so text goes this way as well: the
+            // atomic write below cannot encode a structure.
+            if (tag.type === "STRUCT" && ((0, utils_1.isPlainObject)(value) || typeof value === "string")) {
                 const scope = (0, utils_1.parseProgramScope)(fullName);
                 const tagList = controller.state?.tagList;
                 // newTag() returns a Structure when the tag list holds the template, which is what
-                // turns the object into the controller's byte layout.
+                // turns the value into the controller's byte layout.
                 const struct = typeof controller.newTag === "function" && tagList
                     ? controller.newTag(scope.name, scope.program, false)
                     : new Structure(scope.name, tagList, scope.program);
                 await controller.readTag(struct);
-                if (!(0, utils_1.isPlainObject)(struct.value)) {
-                    throw new Error(`${tagName} is a UDT, but its template is not in the tag list, so it cannot be written as an object`);
+                if (typeof value === "string") {
+                    // A Structure on a LEN + DATA template reads as text; any other UDT as an object.
+                    if (typeof struct.value !== "string") {
+                        throw new Error((0, utils_1.isPlainObject)(struct.value)
+                            ? `${tagName} is a UDT, not a STRING, so it cannot be written as text`
+                            : `${tagName} is a structure, but its template is not in the tag list, so it cannot be written as text`);
+                    }
+                    // Handed over as bytes so LEN counts what goes into DATA: the library takes LEN
+                    // from .length, which for text is characters and comes up short on non-ASCII.
+                    const bytes = Buffer.from(value, "utf8");
+                    const template = tagList.getTemplateByTag(scope.name, scope.program);
+                    const capacity = stringCapacity(template);
+                    if (capacity !== null && bytes.length > capacity) {
+                        throw new Error(`${tagName} holds ${capacity} characters, but the text is ${bytes.length} long`);
+                    }
+                    struct.value = bytes;
+                    // writeTag() encodes again from the decoded value, so that has to be the bytes too.
+                    struct._valueObj = bytes;
                 }
-                // Members not in msg.payload keep the values just read.
-                struct.value = (0, utils_1.mergeMembers)(struct.value, value);
+                else {
+                    if (!(0, utils_1.isPlainObject)(struct.value)) {
+                        throw new Error(`${tagName} is a UDT, but its template is not in the tag list, so it cannot be written as an object`);
+                    }
+                    // Members not in msg.payload keep the values just read.
+                    struct.value = (0, utils_1.mergeMembers)(struct.value, value);
+                }
                 await controller.writeTag(struct);
                 return {
                     success: true,
