@@ -35,7 +35,7 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 |------|------|-------------|
 | **cip-endpoint** | Config | Shared TCP session to a Logix PLC. Auto-reconnect, Micro800 support, multi-hop routing. |
 | **cip-read** | In/Out | Read tag values. Supports bit access (`Tag.5`), array elements (`Tag[3]`), array ranges (`Tag[0..9]`), UDT/structures, batch reads, and polling. |
-| **cip-write** | In/Out | Write tag values. Supports bit-level writes (atomic via CIP 0x4E or software RMW), arrays, UDT partial merge, batch writes. |
+| **cip-write** | In/Out | Write tag values. Supports bit-level writes (atomic via CIP 0x4E or software RMW), arrays, UDT partial merge, text to STRING tags, batch writes. |
 | **cip-browse** | In/Out | Discover tags on the PLC. Glob/regex filtering, UDT detection, program-scoped tags. |
 | **cip-subscribe** | Out | Continuous cyclic multi-tag scanning via `readTagGroup()`. Deadband filtering, report-by-exception, runtime reconfiguration. |
 | **cip-controller** | In/Out | Read controller identity, mode, fault status, keyswitch, tag count. Read-only: no mode change or fault reset. |
@@ -75,6 +75,7 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | Nested array range | `MyStruct.Member[0..101]` | Read a range of a UDT member array |
 | UDT member | `MyUDT.MemberName` | Read/write a single structure member |
 | Whole UDT/STRUCT | `MyUDT` | Full structure as an object (needs tag list) |
+| STRING | `MyString`, `MyUDT.Name` | Text, as a tag or as a UDT member (needs tag list). Text longer than the string fails the write |
 | Array of UDTs | `MyUDT` where `MyUDT : MyType[5]` | One object per element |
 | Program-scoped | `Program:MainProgram.MyTag` | Tag inside a program |
 | Batch | `msg.tags = ["Tag1","Tag2"]` | Multi-tag read via TagGroup |
@@ -299,7 +300,7 @@ docker compose up -d
 
 Each profile provides a realistic tag set:
 
-- **ControlLogix** — scalars (BOOL, INT, DINT, REAL, LINT), arrays (`MyIntArray` INT[10], `MyRealArray` REAL[5]), program-scoped tags (`Program:MainProgram.Speed`, `Program:MainProgram.Recipe` INT[8]), and a nested UDT array `FIS_Stn : FIS_STATION[5]` whose `Local` member holds `FBCONTROL DINT[2]`, `FBFACTUAL REAL[102]`, `FBCOMPARE REAL[102]` and `FBRESULT DINT[2]` — 832 bytes per element, so struct reads exercise fragmentation
+- **ControlLogix** — scalars (BOOL, INT, DINT, REAL, LINT), arrays (`MyIntArray` INT[10], `MyRealArray` REAL[5]), program-scoped tags (`Program:MainProgram.Speed`, `Program:MainProgram.Recipe` INT[8]), a STRING tag `MyString`, a UDT `testVarUDT` with two STRING members and an INT, and a nested UDT array `FIS_Stn : FIS_STATION[5]` whose `Local` member holds `FBCONTROL DINT[2]`, `FBFACTUAL REAL[102]`, `FBCOMPARE REAL[102]` and `FBRESULT DINT[2]` — 832 bytes per element, so struct reads exercise fragmentation
 - **CompactLogix** — Same as CLX
 - **Micro800** — 24 I/O tags (10 DO + 14 DI, all BOOL)
 - **MicroLogix** — PCCC registers (N7, F8, B3, T4, C5, S)
@@ -365,6 +366,7 @@ Tests cover:
 - CIP path building (8-bit/16-bit segments, attributeId edge cases)
 - **Forward_Open framing** — strict PowerFlex 525 acceptance (transport byte, Connection Point vs Instance segments, electronic key parsing)
 - **cip-read end-to-end** — the real node reads whole arrays, nested UDTs, arrays of UDTs, ranges, program-scoped tags and batches from the ControlLogix simulator, over fragmented responses
+- **cip-write end-to-end** — the real node writes against the ControlLogix simulator: the Data Type check, bit writes including the sign bit, partial UDT writes, and text to STRING tags and STRING members (empty, non-ASCII, full length, too long)
 - **cip-io-scanner end-to-end** — the real node drives the PowerFlex 525 simulator over TCP ForwardOpen + cyclic UDP I/O, asserting the connection establishes, data flows both directions, and a refused connection surfaces its extended status
 
 To exercise implicit I/O manually without Docker, run the drive simulator directly and point a `cip-io-scanner` node (Output 2 / Input 1 / Config 6, sizes 4 / 8, Run/Idle on) at `127.0.0.1:44818`:
@@ -520,5 +522,7 @@ several releases exist because someone described a bug well enough to reproduce 
 | [@Steve-Mcl](https://github.com/Steve-Mcl) (Stephen McLaughlin) | Dynamic/runtime connection management ([#12](https://github.com/blanpa/node-red-contrib-cip-suite/pull/12), [#10](https://github.com/blanpa/node-red-contrib-cip-suite/issues/10)), the connection lifecycle rework that made a dropped PLC detectable at all ([#11](https://github.com/blanpa/node-red-contrib-cip-suite/pull/11)), and the tag browse fix ([#13](https://github.com/blanpa/node-red-contrib-cip-suite/pull/13)) |
 | [@cgraun](https://github.com/cgraun) | Reported that arrays returned only their first element ([#4](https://github.com/blanpa/node-red-contrib-cip-suite/issues/4)), which uncovered the UDT array, tag casing and program scope bugs fixed in 0.0.7 |
 | [@rmsems](https://github.com/rmsems) | Reported the PowerFlex 525 drive control gaps ([#3](https://github.com/blanpa/node-red-contrib-cip-suite/issues/3)), which led to the extended Forward_Open diagnostics and the drive simulator profile |
+| [@QvixoteRoux](https://github.com/QvixoteRoux) | Fixed bit writes on the sign bit of INT and SINT tags and verified them on a 1769-L36ERM ([#35](https://github.com/blanpa/node-red-contrib-cip-suite/pull/35)) |
+| [@giovannapalomba](https://github.com/giovannapalomba) | Reported that text could not be written to a STRING tag, with the root cause and a proposed fix ([#36](https://github.com/blanpa/node-red-contrib-cip-suite/issues/36)), and confirmed the fix on a Compact GuardLogix 5380 |
 
 New contributors are welcome — see [Contributing and forks](#contributing-and-forks) above.

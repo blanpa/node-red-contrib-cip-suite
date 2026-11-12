@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.2 — 2026-11-12
+
+Thanks to [@giovannapalomba](https://github.com/giovannapalomba) for the report behind this
+release, which already named the root cause (#36).
+
+Tested with unit tests and end-to-end against the bundled simulator. The reporter confirmed
+the fix on a 5069-L340ERS2 Compact GuardLogix 5380 (v36). **Which cases ran there is not
+known: over-long text, non-ASCII text and user-defined string types are only tested against
+the simulator.**
+
+### Fixed
+
+- **cip-write** — **Text could not be written to a STRING tag.** A text payload on a Logix
+  STRING failed with "Unrecognized Type to Write to Controller: 672", because Logix holds
+  STRING as a structure and only object payloads were written as one. Text now works for a
+  STRING tag (`MyString`) and for a STRING member addressed by its path
+  (`MyUDT.Name`), which leaves the other members alone. (#36)
+- **cip-write** — **Text longer than the string** now fails with a clear error instead of
+  being truncated. The limit comes from the string's own type, so it also holds for
+  user-defined string types.
+- **cip-write** — **Non-ASCII text** is written whole. LEN now counts bytes (the text is
+  written as UTF-8, the way cip-read decodes it); before, it counted characters and cut the
+  text short.
+- **cip-write** — **Text for a UDT that is not a STRING** now fails with a clear error.
+
 ## 0.2.1 — 2026-11-05
 
 Thanks to [@QvixoteRoux](https://github.com/QvixoteRoux) and [@Steve-Mcl](https://github.com/Steve-Mcl)

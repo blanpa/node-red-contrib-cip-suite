@@ -109,6 +109,10 @@
     or send an object to a UDT tag, e.g. <code>{ "Speed": 50 }</code>. Only the members in the
     object change; the rest keep their current value. Nested UDTs work the same way, and an
     unknown member name fails the write.</li>
+    <li><b>STRING writes:</b> Send text to a STRING tag, e.g. <code>MyString</code>, or to a STRING
+    member by its path, e.g. <code>MyUDT.Name</code>, which leaves the other members alone. Text
+    longer than the string fails the write instead of being cut off. The length is counted in
+    bytes, so non-ASCII text (written as UTF-8) takes more than one per character.</li>
     <li><b>Program-scoped:</b> Use <code>Program:MainProgram.TagName</code> syntax.</li>
   </ul>
   <h3>Batch Mode</h3>
