@@ -113,6 +113,10 @@
     <li><b>Array range:</b> Use range notation, e.g. <code>MyArray[0..9]</code> or <code>MyStruct.Member[0..101]</code> reads elements 0 through N.</li>
     <li><b>UDT members:</b> Access members with dot notation, e.g. <code>MyUDT.MemberName</code>.</li>
     <li><b>Whole array:</b> Give the tag on its own, e.g. <code>MyArray</code> or <code>MyStruct.Member</code>, to read every element. An array of UDTs yields one object per element.</li>
+    <li><b>Strings:</b> Read the STRING tag itself, e.g. <code>Line1.LotName</code>, to get the
+    text. Built-in and custom-length strings (STRING20 and so on) both return text.
+    <code>.LEN</code> and <code>.DATA</code> are the tag's length and character array, so you
+    rarely need them.</li>
     <li><b>Program-scoped:</b> Use <code>Program:MainProgram.TagName</code> syntax.</li>
   </ul>
   <p>Tag paths are matched case-insensitively, the way Logix treats them:

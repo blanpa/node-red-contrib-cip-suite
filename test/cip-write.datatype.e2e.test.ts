@@ -298,3 +298,85 @@ describe("cip-write STRING", () => {
     expect(after.testVar3).toBe(7);
   });
 });
+
+describe("cip-write custom-length strings and members", () => {
+  async function readStruct(name: string): Promise<any> {
+    const tag = plc.newTag(name, null, false);
+    await plc.readTag(tag);
+    return tag.value;
+  }
+
+  it.each(["auto", "STRING"])("writes text to a STRING20 tag (Data Type %s)", async (dataType) => {
+    const { write } = makeWriteNode({ tagName: "MyString20", dataType });
+    const msg = await write({ payload: "Continue" });
+    expect(msg.payload).toMatchObject({ success: true });
+    expect(await readStruct("MyString20")).toBe("Continue");
+  });
+
+  it("refuses text that does not fit a STRING20", async () => {
+    const before = await readStruct("MyString20");
+    const { write } = makeWriteNode({ tagName: "MyString20", dataType: "auto" });
+    const msg = await write({ payload: "This is longer than twenty" });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("MyString20 holds 20 characters, but the text is 26 long");
+    expect(await readStruct("MyString20")).toBe(before);
+  });
+
+  it("refuses text for the DATA member of a STRING", async () => {
+    const before = await readStruct("MyString20");
+    const { write } = makeWriteNode({ tagName: "MyString20.DATA", dataType: "auto" });
+    const msg = await write({ payload: "Continue" });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toMatch(/is a SINT, so it cannot take text/);
+    expect(await readStruct("MyString20")).toBe(before);
+  });
+
+  it("writes the characters to DATA, then the length to LEN", async () => {
+    const codes = Array.from(Buffer.from("Continue"));
+    const data = makeWriteNode({ tagName: "MyString20.DATA", dataType: "auto" });
+    expect((await data.write({ payload: codes })).payload.success).toBe(true);
+    const len = makeWriteNode({ tagName: "MyString20.LEN", dataType: "auto" });
+    expect((await len.write({ payload: codes.length })).payload.success).toBe(true);
+    expect(await readStruct("MyString20")).toBe("Continue");
+  });
+
+  it("refuses more characters than DATA holds", async () => {
+    const before = await readStruct("MyString20");
+    const { write } = makeWriteNode({ tagName: "MyString20.DATA", dataType: "auto" });
+    const msg = await write({ payload: new Array(21).fill(65) });
+    expect(msg.payload.success).toBe(false);
+    expect(await readStruct("MyString20")).toBe(before);
+  });
+
+  it("writes a STRING20 inside a UDT", async () => {
+    const { write } = makeWriteNode({ tagName: "Line1.LotName", dataType: "auto" });
+    expect((await write({ payload: "Lot 42" })).payload).toMatchObject({ success: true });
+    expect(await readStruct("Line1.LotName")).toBe("Lot 42");
+  });
+
+  it("writes one element of a STRING array", async () => {
+    const { write } = makeWriteNode({ tagName: "MyStrings[1]", dataType: "auto" });
+    expect((await write({ payload: "Second" })).payload).toMatchObject({ success: true });
+    expect(await readStruct("MyStrings[1]")).toBe("Second");
+    expect(await readStruct("MyStrings[0]")).toBe("");
+  });
+
+  it("writes numeric text to a SINT as the number", async () => {
+    const { write } = makeWriteNode({ tagName: "MyString20.DATA[0]", dataType: "auto" });
+    expect((await write({ payload: "65" })).payload).toMatchObject({ success: true });
+    expect(await readValue("MyString20.DATA[0]")).toBe(65);
+  });
+
+  it.each([
+    ["MyInt", "INT"],
+    ["MyDint", "DINT"],
+    ["MyReal", "REAL"],
+  ])("refuses non-numeric text to %s", async (tagName, type) => {
+    const before = await readValue(tagName);
+    const { write } = makeWriteNode({ tagName, dataType: "auto" });
+    const msg = await write({ payload: "Continue" });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe(`${tagName} is a ${type}, so it cannot take text`);
+    expect(await readValue(tagName)).toBe(before);
+  });
+});

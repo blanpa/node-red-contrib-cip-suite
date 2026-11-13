@@ -847,6 +847,28 @@ function handleWriteTag(service, tagName, dataBuf) {
     return cipResponse(service, 0);
   }
 
+  // Write to an atomic member of a UDT, e.g. "MyString20.LEN" or "MyString20.DATA".
+  // This is what a controller does: a member is not a tag of its own, so the values are
+  // stored in the parent structure's bytes, `count` elements from the start of the member,
+  // and a later read of the whole structure sees them. Without this the write would fall
+  // through to the scalar handling below and create a stray tag named after the member path,
+  // leaving the structure unchanged.
+  const member = resolveTagPath(tagName);
+  if (member && member.tag.structure && !member.structure && member.tag.name !== tagName) {
+    // A controller refuses a write whose type is not the member's type.
+    if (type !== member.typeCode) return cipResponse(service, 0xff, undefined, 0x2107);
+    const count = dataBuf.readUInt16LE(2);
+    const bytes = dataBuf.slice(4);
+    // ...and one that carries more elements than the member has (0x15, too much data), or
+    // whose payload is not exactly `count` elements.
+    if (count > member.elementCount || bytes.length !== count * member.elementSize) {
+      return cipResponse(service, 0x15);
+    }
+    bytes.copy(member.tag.data, member.byteOffset);
+    console.log(`  WRITE ${tagName} (member) ${count} x ${member.elementSize} bytes`);
+    return cipResponse(service, 0);
+  }
+
   let value;
   switch (type) {
     case CIP_TYPES.BOOL:
