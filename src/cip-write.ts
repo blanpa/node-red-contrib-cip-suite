@@ -329,6 +329,19 @@ module.exports = function (RED: any) {
         };
       }
 
+      // The library writes non-numeric text to a number tag as 0 (NaN for REAL) and reports
+      // success. Numeric text such as "65" is written as the number.
+      const numericTypes = ["SINT", "USINT", "INT", "DINT", "REAL"];
+      if (
+        typeof value === "string" &&
+        numericTypes.includes(tag.type) &&
+        (value.trim() === "" || Number.isNaN(Number(value)))
+      ) {
+        // A SINT is usually the DATA member of a STRING, so point at the STRING tag.
+        const hint = tag.type === "SINT" ? ". To write text, write to the STRING tag that holds it" : "";
+        throw new Error(`${tagName} is a ${tag.type}, so it cannot take text${hint}`);
+      }
+
       // Standard tag write
       tag.value = value;
       await controller.writeTag(tag);
