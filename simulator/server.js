@@ -869,6 +869,44 @@ function handleWriteTag(service, tagName, dataBuf) {
     return cipResponse(service, 0);
   }
 
+  // Write to an array tag, or to elements of one ("MyIntArray[2]"): `count` elements go in
+  // from the subscript on. A controller refuses more elements than are left (0x15, too much
+  // data), and one whose payload is not exactly `count` elements.
+  const elements = resolveTagPath(tagName);
+  if (elements && !elements.tag.structure && Array.isArray(elements.tag.value)) {
+    if (type !== elements.typeCode) return cipResponse(service, 0xff, undefined, 0x2107);
+    const count = dataBuf.readUInt16LE(2);
+    const size = elements.elementSize;
+    if (count > elements.elementCount || dataBuf.length - 4 !== count * size) {
+      return cipResponse(service, 0x15);
+    }
+    const start = elements.byteOffset / size;
+    for (let i = 0; i < count; i++) {
+      const at = 4 + i * size;
+      let item;
+      switch (type) {
+        case CIP_TYPES.BOOL:
+        case CIP_TYPES.SINT:
+          item = dataBuf.readInt8(at);
+          break;
+        case CIP_TYPES.INT:
+          item = dataBuf.readInt16LE(at);
+          break;
+        case CIP_TYPES.DINT:
+          item = dataBuf.readInt32LE(at);
+          break;
+        case CIP_TYPES.REAL:
+          item = dataBuf.readFloatLE(at);
+          break;
+        default:
+          item = 0;
+      }
+      elements.tag.value[start + i] = item;
+    }
+    console.log(`  WRITE ${tagName} (array) ${count} element(s) from ${start}`);
+    return cipResponse(service, 0);
+  }
+
   let value;
   switch (type) {
     case CIP_TYPES.BOOL:

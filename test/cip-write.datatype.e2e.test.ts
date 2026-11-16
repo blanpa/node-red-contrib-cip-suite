@@ -368,15 +368,104 @@ describe("cip-write custom-length strings and members", () => {
   });
 
   it.each([
-    ["MyInt", "INT"],
-    ["MyDint", "DINT"],
-    ["MyReal", "REAL"],
-  ])("refuses non-numeric text to %s", async (tagName, type) => {
+    ["MyInt", "an", "INT"],
+    ["MyDint", "a", "DINT"],
+    ["MyReal", "a", "REAL"],
+  ])("refuses non-numeric text to %s", async (tagName, article, type) => {
     const before = await readValue(tagName);
     const { write } = makeWriteNode({ tagName, dataType: "auto" });
     const msg = await write({ payload: "Continue" });
     expect(msg.payload.success).toBe(false);
-    expect(msg.payload.error).toBe(`${tagName} is a ${type}, so it cannot take text`);
+    expect(msg.payload.error).toBe(`${tagName} is ${article} ${type}, so it cannot take text`);
     expect(await readValue(tagName)).toBe(before);
+  });
+
+  it.each([
+    ["MyInt", "an INT"],
+    ["MyDint", "a DINT"],
+    ["MyReal", "a REAL"],
+  ])("refuses an array of text for %s", async (tagName, typeText) => {
+    const before = await readValue(tagName);
+    const { write } = makeWriteNode({ tagName, dataType: "auto" });
+    const msg = await write({ payload: ["a"] });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe(`${tagName} is ${typeText}, so it cannot take text`);
+    expect(await readValue(tagName)).toBe(before);
+  });
+
+  it("refuses an array of text starting at an array element", async () => {
+    const before = await readValue("MyIntArray[2]");
+    const { write } = makeWriteNode({ tagName: "MyIntArray[2]", dataType: "auto" });
+    const msg = await write({ payload: ["a", "b"] });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("MyIntArray[2] is an INT, so it cannot take text");
+    expect(await readValue("MyIntArray[2]")).toBe(before);
+  });
+
+  it("writes a number to an array element", async () => {
+    const { write } = makeWriteNode({ tagName: "MyIntArray[2]", dataType: "auto" });
+    expect((await write({ payload: 12 })).payload.success).toBe(true);
+    expect(await readValue("MyIntArray[2]")).toBe(12);
+  });
+
+  it("writes an array of one number to an array element", async () => {
+    const { write } = makeWriteNode({ tagName: "MyIntArray[2]", dataType: "auto" });
+    expect((await write({ payload: [13] })).payload.success).toBe(true);
+    expect(await readValue("MyIntArray[2]")).toBe(13);
+  });
+
+  it("writes an array of numbers starting at an array element", async () => {
+    const { write } = makeWriteNode({ tagName: "MyIntArray[2]", dataType: "auto" });
+    expect((await write({ payload: [14, 15] })).payload.success).toBe(true);
+    expect(await readValue("MyIntArray[2]")).toBe(14);
+    expect(await readValue("MyIntArray[3]")).toBe(15);
+  });
+
+  it("refuses more values than the array holds", async () => {
+    const before = await readValue("MyIntArray");
+    const { write } = makeWriteNode({ tagName: "MyIntArray", dataType: "auto" });
+    const msg = await write({ payload: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] });
+    expect(msg.payload.success).toBe(false);
+    expect(await readValue("MyIntArray")).toEqual(before);
+  });
+
+  it("refuses more values than are left after the array element", async () => {
+    const before = await readValue("MyIntArray");
+    const { write } = makeWriteNode({ tagName: "MyIntArray[8]", dataType: "auto" });
+    const msg = await write({ payload: [1, 2, 3, 4, 5] });
+    expect(msg.payload.success).toBe(false);
+    expect(await readValue("MyIntArray")).toEqual(before);
+  });
+
+  it("refuses text in a range write", async () => {
+    const before = [await readValue("MyIntArray[0]"), await readValue("MyIntArray[1]")];
+    const { write } = makeWriteNode({ tagName: "MyIntArray[0..1]", dataType: "auto" });
+    const msg = await write({ payload: ["a", "b"] });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("MyIntArray[0] is an INT, so it cannot take text");
+    expect([await readValue("MyIntArray[0]"), await readValue("MyIntArray[1]")]).toEqual(before);
+  });
+
+  it("writes none of a range when a later value is text", async () => {
+    const before = await readValue("MyIntArray");
+    const { write } = makeWriteNode({ tagName: "MyIntArray[0..2]", dataType: "auto" });
+    const msg = await write({ payload: [1, 2, "x"] });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("MyIntArray[2] is an INT, so it cannot take text");
+    expect(await readValue("MyIntArray")).toEqual(before);
+  });
+
+  it("writes a range of numbers", async () => {
+    const { write } = makeWriteNode({ tagName: "MyIntArray[4..5]", dataType: "auto" });
+    expect((await write({ payload: [41, 51] })).payload.success).toBe(true);
+    expect(await readValue("MyIntArray[4]")).toBe(41);
+    expect(await readValue("MyIntArray[5]")).toBe(51);
+  });
+
+  it("refuses an array element in a range write", async () => {
+    const { write } = makeWriteNode({ tagName: "MyIntArray[0..1]", dataType: "auto" });
+    const msg = await write({ payload: [[1], [2]] });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("MyIntArray[0] is an INT, so it cannot take an array");
   });
 });
