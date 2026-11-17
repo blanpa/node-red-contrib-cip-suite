@@ -123,7 +123,7 @@ re-established, so a polled array costs one request per poll:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | IP Address | — | PLC IP address |
-| Port | 44818 | EtherNet/IP port |
+| Port | 44818 | EtherNet/IP port. Change it only for port forwarding, a tunnel or a container port mapping |
 | Slot | 0 | Backplane slot (ControlLogix) |
 | Timeout (ms) | 5000 | Connection timeout |
 | Retry (ms) | 5000 | Reconnection interval, doubling up to Max retry |
@@ -133,8 +133,6 @@ re-established, so a polled array costs one request per poll:
 | Dynamic Control | off | Opt in to runtime control via `msg.action` / `msg.endpoint` |
 | Micro800 | off | Enable for Micro800 (skips ForwardOpen, uses UCMM) |
 | Routing Path | — | Multi-hop routing (e.g. `1/0/2/192.168.1.1`) |
-
-> **Port** is informational. EtherNet/IP is always contacted on 44818.
 
 ### cip-pccc-endpoint
 

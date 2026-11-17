@@ -17,11 +17,6 @@
     },
     label: function () {
       return this.name || this.address;
-    },
-    oneditprepare: function () {
-      // st-ethernet-ip always connects on 44818 and takes no port, so the field shows
-      // the port actually used rather than one that would be ignored.
-      $("#node-config-input-port").val(44818).prop("readonly", true);
     }
   });
 </script>
@@ -38,9 +33,6 @@
   <div class="form-row form-row-130">
     <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
     <input type="number" id="node-config-input-port" placeholder="44818" />
-  </div>
-  <div class="form-tips" style="margin-bottom:12px">
-    The port is fixed at 44818: the underlying library does not support another one yet.
   </div>
   <div class="form-row form-row-130">
     <label for="node-config-input-slot"><i class="fa fa-microchip"></i> Slot</label>
@@ -191,10 +183,11 @@
   <h3>Settings</h3>
   <dl class="message-properties">
     <dt>IP Address <span class="property-type">string</span></dt>
-    <dd>Hostname or IP of the controller. The <b>Port</b> is fixed at 44818, because
-    st-ethernet-ip does not support another one yet. A different port set in an older flow
-    or through dynamic control is ignored, with a warning. Controllers reached through
-    port forwarding or a tunnel on another port cannot be used for now.</dd>
+    <dd>Hostname or IP of the controller.</dd>
+    <dt>Port <span class="property-type">number</span></dt>
+    <dd>TCP port of the EtherNet/IP session, 44818 by default. Change it only when the
+    controller is reached through port forwarding, a tunnel or a container port mapping
+    on another port.</dd>
     <dt>Slot <span class="property-type">number</span></dt>
     <dd>Backplane slot of the CPU. Leave at 0 for controllers with no backplane.</dd>
     <dt>Routing Path <span class="property-type">string</span></dt>

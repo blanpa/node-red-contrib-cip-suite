@@ -19,6 +19,7 @@ import {
   CIP_TYPE_NAMES,
 } from "./types";
 import { withTiming, cipTypeName, toCipError, guardReplyHandlers, describeCipError } from "./utils";
+import { connectOnPort, connectedPort, DEFAULT_EIP_PORT } from "./eip-port";
 
 const { Controller } = require("st-ethernet-ip");
 
@@ -38,12 +39,6 @@ const CIP_CONNECTION_FAILURE = 0x01;
  * legitimately in progress.
  */
 const LIB_SESSION_TIMEOUT = 10000;
-
-/**
- * st-ethernet-ip always dials 44818 and takes no port (SerafinTech/ST-node-ethernet-ip#85),
- * so the configured port is kept but not used. Logs and info report the port actually used.
- */
-const EIP_PORT = 44818;
 
 module.exports = function (RED: any) {
   function CipEndpointNode(this: any, config: CipEndpointConfig & { id: string; name: string }) {
@@ -82,7 +77,7 @@ module.exports = function (RED: any) {
       const bool = (v: any) => v !== false && v !== "false";
 
       apply("address", str, "");
-      apply("port", int, 44818);
+      apply("port", int, DEFAULT_EIP_PORT);
       apply("slot", int, 0);
       apply("connTimeout", int, 5000);
       apply("retryInterval", int, 5000);
@@ -101,7 +96,7 @@ module.exports = function (RED: any) {
 
       // A NaN from a non-numeric override would poison every later comparison.
       const numericDefaults: Record<string, number> = {
-        port: 44818,
+        port: DEFAULT_EIP_PORT,
         slot: 0,
         connTimeout: 5000,
         retryInterval: 5000,
@@ -264,7 +259,7 @@ module.exports = function (RED: any) {
         ...node.metrics,
         uptime: node.metrics.connectTime && node.connected ? Date.now() - node.metrics.connectTime : 0,
         address: node.address,
-        port: EIP_PORT,
+        port: node.port,
         slot: node.slot,
         useMicro800: node.useMicro800,
         routingPath: node.routingPath || null,
@@ -357,7 +352,7 @@ module.exports = function (RED: any) {
 
       node.metrics.errorCount++;
       node.metrics.reconnectCount++;
-      node.log(`Connection to ${node.address}:${EIP_PORT} lost${err ? ": " + describeCipError(err) : ""}`);
+      node.log(`Connection to ${node.address}:${node.port} lost${err ? ": " + describeCipError(err) : ""}`);
       node._settleConnect(err || new Error("Connection lost"));
       node._broadcast("cip:disconnected");
       if (!node._manualDisconnect) node._scheduleRetry();
@@ -406,17 +401,12 @@ module.exports = function (RED: any) {
         // underlying promise ever does settle.
         node._attemptId++;
         node._onConnectFailed(
-          new Error(`Timed out connecting to ${node.address}:${EIP_PORT} after ${budget}ms`),
+          new Error(`Timed out connecting to ${node.address}:${node.port} after ${budget}ms`),
           node.plc
         );
       }, budget);
 
       const onSettled = (): void => clearTimeout(watchdog);
-
-      if (node.port !== EIP_PORT && node._portWarned !== node.port) {
-        node._portWarned = node.port;
-        node.warn(`Port ${node.port} is ignored: st-ethernet-ip always connects on ${EIP_PORT}`);
-      }
 
       try {
         // Micro800: unconnected messaging (no ForwardOpen)
@@ -442,8 +432,9 @@ module.exports = function (RED: any) {
 
         const thisPlc = node.plc;
         const setupMode = !node.useMicro800;
-        node.plc
-          .connect(node.address, node.slot, setupMode)
+        // st-ethernet-ip has no port option; connectOnPort supplies it (#18).
+        const port = node.port;
+        connectOnPort(port, () => thisPlc.connect(node.address, node.slot, setupMode))
           .then(async () => {
             onSettled();
             // A disconnect, or a newer attempt, that landed while this one was in flight
@@ -455,6 +446,19 @@ module.exports = function (RED: any) {
                 node.connecting = false;
                 node._settleConnect(new Error("Disconnected"));
               }
+              return;
+            }
+
+            // If a library update ever changed how the port is picked, it shows here rather
+            // than as a session quietly open on 44818.
+            const actualPort = connectedPort(thisPlc);
+            if (actualPort !== null && actualPort !== port) {
+              node._onConnectFailed(
+                new Error(
+                  `Connected on port ${actualPort} instead of ${port}: this st-ethernet-ip version does not take the configured port`
+                ),
+                thisPlc
+              );
               return;
             }
 
@@ -476,7 +480,7 @@ module.exports = function (RED: any) {
             node._watchSocket(thisPlc);
             node._startKeepAlive();
             node.log(
-              `Connected to ${node.address}:${EIP_PORT} slot ${node.slot}${node.useMicro800 ? " (Micro800)" : ""}${node.routingPath ? " routing=" + node.routingPath : ""}`
+              `Connected to ${node.address}:${node.port} slot ${node.slot}${node.useMicro800 ? " (Micro800)" : ""}${node.routingPath ? " routing=" + node.routingPath : ""}`
             );
             node._settleConnect(null);
             node._broadcast("cip:connected");
