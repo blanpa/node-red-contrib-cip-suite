@@ -8,6 +8,8 @@ const {
   FIS_STATION,
   FIS_STN_COUNT,
   STRING,
+  STRING20,
+  LOT_INFO,
   NODERED_UDT,
   buildFisStnData,
   buildStringData,
@@ -91,10 +93,20 @@ function createControlLogixTags() {
     arrayTag("MyIntArray", CIP_TYPES.INT, "INT", [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]));
   tags.set("MyRealArray",
     arrayTag("MyRealArray", CIP_TYPES.REAL, "REAL", [1.1, 2.2, 3.3, 4.4, 5.5]));
+  // One byte per element, the way a Micro800 holds a BOOL array.
+  tags.set("MyBoolArray",
+    arrayTag("MyBoolArray", CIP_TYPES.BOOL, "BOOL", [0, 0, 0, 0, 0, 0, 0, 0]));
 
   // UDT: array of stations, each holding a nested UDT of long arrays.
   // Reproduces the tag shape from issue #4.
   tags.set("FIS_Stn", structTag("FIS_Stn", FIS_STATION, FIS_STN_COUNT, buildFisStnData()));
+
+  // A custom-length STRING20
+  tags.set("MyString20", structTag("MyString20", STRING20, 1, Buffer.alloc(STRING20.structureSize)));
+
+  // A STRING inside a UDT, and an array of STRINGs
+  tags.set("Line1", structTag("Line1", LOT_INFO, 1, Buffer.alloc(LOT_INFO.structureSize)));
+  tags.set("MyStrings", structTag("MyStrings", STRING20, 3, Buffer.alloc(STRING20.structureSize * 3)));
 
   // STRING, on its own and as UDT members (issue #36).
   tags.set("MyString", structTag("MyString", STRING, 1, buildStringData("hello")));

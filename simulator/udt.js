@@ -162,6 +162,18 @@ const NODERED_UDT = defineTemplate(0x0303, "NodeRed_UDT", 0x4d1a, [
   { name: "pad", type: 0xc3 },
 ]);
 
+// A custom-length string type, as a user makes in Studio 5000.
+const STRING20 = defineTemplate(0x0304, "STRING20", 0x1a21, [
+  { name: "LEN", type: 0xc4 },
+  { name: "DATA", type: 0xc2, count: 20 },
+]);
+
+// A UDT holding a STRING20 member, the shape of "Line1.LotName".
+const LOT_INFO = defineTemplate(0x0305, "LOT_INFO", 0x2b31, [
+  { name: "Count", type: 0xc4 },
+  { name: "LotName", template: STRING20 },
+]);
+
 /**
  * The bytes of a STRING holding `text`.
  * @param {string} text
@@ -177,6 +189,8 @@ function buildStringData(text) {
 const TEMPLATES = new Map([
   [FIS_LOCAL.id, FIS_LOCAL],
   [FIS_STATION.id, FIS_STATION],
+  [STRING20.id, STRING20],
+  [LOT_INFO.id, LOT_INFO],
   [STRING.id, STRING],
   [NODERED_UDT.id, NODERED_UDT],
 ]);
@@ -213,6 +227,8 @@ module.exports = {
   TEMPLATES,
   FIS_LOCAL,
   FIS_STATION,
+  STRING20,
+  LOT_INFO,
   FIS_STN_COUNT,
   STRING,
   NODERED_UDT,

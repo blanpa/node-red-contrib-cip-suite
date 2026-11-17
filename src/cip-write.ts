@@ -60,6 +60,16 @@ function stringCapacity(template: any): number | null {
   return typeof size === "number" && size > 0 ? size : null;
 }
 
+/** Types the library writes as a number, whatever the value is. */
+const NUMERIC_TYPES = ["SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "REAL", "LREAL"];
+/** Of those, the names read with "an" ("an INT") */
+const AN_TYPES = ["INT"];
+/**
+ * Types whose arrays the library encodes in one write. For a BOOL array it sends the element
+ * count but a single byte, so a BOOL range has to go out one element at a time.
+ */
+const ARRAY_WRITE_TYPES = ["SINT", "USINT", "INT", "DINT", "REAL", "LINT"];
+
 module.exports = function (RED: any) {
   function CipWriteNode(this: any, config: any) {
     RED.nodes.createNode(this, config);
@@ -84,6 +94,28 @@ module.exports = function (RED: any) {
       const actual = typeof tag.type === "number" ? cipTypeName(tag.type) : String(tag.type);
       if (!accepted.includes(actual)) {
         throw new Error(`${tagName} is ${actual}, but the node's Data Type is ${node.dataType}`);
+      }
+    }
+
+    /**
+     * The library writes text, or an array on a single number, to a number tag as 0 (NaN
+     * for REAL) and reports success, so both are refused here. Numeric text such as "65"
+     * is written as the number. A tag read without an index only returns its first element,
+     * so a whole tag cannot be told from a single number: its array is checked element by
+     * element. An indexed tag takes an array too, written from that element on.
+     * `singleElement` is for a range member, which is one value and cannot take an array.
+     */
+    function assertValueFitsNumeric(tag: any, value: any, tagName: string, singleElement: boolean): void {
+      if (!NUMERIC_TYPES.includes(tag.type)) return;
+      const article = AN_TYPES.includes(tag.type) ? "an" : "a";
+      const isText = (v: any) => typeof v === "string" && (v.trim() === "" || Number.isNaN(Number(v)));
+      if (Array.isArray(value) && singleElement) {
+        throw new Error(`${tagName} is ${article} ${tag.type}, so it cannot take an array`);
+      }
+      if (isText(value) || (Array.isArray(value) && value.some(isText))) {
+        // A SINT is usually the DATA member of a STRING, so point at the STRING tag.
+        const hint = tag.type === "SINT" ? ". To write text, write to the STRING tag that holds it" : "";
+        throw new Error(`${tagName} is ${article} ${tag.type}, so it cannot take text${hint}`);
       }
     }
 
@@ -250,14 +282,28 @@ module.exports = function (RED: any) {
             `Array range [${parsed.arrayStart}..${parsed.arrayEnd}] expects ${count} values, got ${value.length}`
           );
         }
-        // Write each element individually
+        // Every value is checked before anything is sent, so a bad value late in the list
+        // leaves the range unchanged. Where the library can encode the range, it goes out as
+        // one write from the first element and the controller takes all of it or none.
+        // Other types (BOOL) go element by element, as the library would send a broken
+        // multi-element write for them.
+        const first = new Tag(`${parsed.baseName}[${parsed.arrayStart}]`);
+        await controller.readTag(first); // init type
         for (let i = 0; i < count; i++) {
-          const idx = parsed.arrayStart + i;
-          const elemTag = new Tag(`${parsed.baseName}[${idx}]`);
-          await controller.readTag(elemTag); // init type
-          checkDataType(elemTag, elemTag.name);
-          elemTag.value = value[i];
-          await controller.writeTag(elemTag);
+          const elemName = `${parsed.baseName}[${parsed.arrayStart + i}]`;
+          checkDataType(first, elemName);
+          assertValueFitsNumeric(first, value[i], elemName, true);
+        }
+        if (ARRAY_WRITE_TYPES.includes(first.type)) {
+          first.value = value;
+          await controller.writeTag(first);
+        } else {
+          for (let i = 0; i < count; i++) {
+            const elemTag = new Tag(`${parsed.baseName}[${parsed.arrayStart + i}]`);
+            await controller.readTag(elemTag); // init type
+            elemTag.value = value[i];
+            await controller.writeTag(elemTag);
+          }
         }
         return {
           success: true,
@@ -328,6 +374,8 @@ module.exports = function (RED: any) {
           timestamp: Date.now(),
         };
       }
+
+      assertValueFitsNumeric(tag, value, tagName, false);
 
       // Standard tag write
       tag.value = value;

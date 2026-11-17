@@ -98,7 +98,7 @@
   is always what gets written. With a type other than <i>Auto-detect</i> the node checks that the
   tag really has that type and fails the write otherwise, e.g. <code>MyDint is DINT, but the
   node's Data Type is REAL</code>. <i>STRING</i> also accepts Logix STRING tags, which are
-  structures. Bit writes (<code>MyDint.5</code>) are not checked.</p>
+  structures; custom string types such as STRING20 count as STRING here. Bit writes (<code>MyDint.5</code>) are not checked.</p>
   <p>Click the <i class="fa fa-search"></i> button next to the tag name field to browse available tags
   from the connected PLC. The endpoint must be deployed and connected first.</p>
   <h3>Tag Addressing</h3>
@@ -112,7 +112,9 @@
     <li><b>STRING writes:</b> Send text to a STRING tag, e.g. <code>MyString</code>, or to a STRING
     member by its path, e.g. <code>MyUDT.Name</code>, which leaves the other members alone. Text
     longer than the string fails the write instead of being cut off. The length is counted in
-    bytes, so non-ASCII text (written as UTF-8) takes more than one per character.</li>
+    bytes, so non-ASCII text (written as UTF-8) takes more than one per character.
+    Write to the STRING tag itself, not to its <code>.DATA</code> member: that is the tag's
+    character array, and the node refuses to write text to it.</li>
     <li><b>Program-scoped:</b> Use <code>Program:MainProgram.TagName</code> syntax.</li>
   </ul>
   <h3>Batch Mode</h3>
