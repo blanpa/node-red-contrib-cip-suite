@@ -462,6 +462,14 @@ describe("cip-write custom-length strings and members", () => {
     expect(await readValue("MyIntArray[5]")).toBe(51);
   });
 
+  it("writes a range of BOOLs", async () => {
+    const { write } = makeWriteNode({ tagName: "MyBoolArray[1..3]", dataType: "auto" });
+    expect((await write({ payload: [true, false, true] })).payload.success).toBe(true);
+    expect(await readValue("MyBoolArray[1]")).toBe(true);
+    expect(await readValue("MyBoolArray[2]")).toBe(false);
+    expect(await readValue("MyBoolArray[3]")).toBe(true);
+  });
+
   it("refuses an array element in a range write", async () => {
     const { write } = makeWriteNode({ tagName: "MyIntArray[0..1]", dataType: "auto" });
     const msg = await write({ payload: [[1], [2]] });

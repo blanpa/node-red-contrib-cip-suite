@@ -93,6 +93,9 @@ function createControlLogixTags() {
     arrayTag("MyIntArray", CIP_TYPES.INT, "INT", [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]));
   tags.set("MyRealArray",
     arrayTag("MyRealArray", CIP_TYPES.REAL, "REAL", [1.1, 2.2, 3.3, 4.4, 5.5]));
+  // One byte per element, the way a Micro800 holds a BOOL array.
+  tags.set("MyBoolArray",
+    arrayTag("MyBoolArray", CIP_TYPES.BOOL, "BOOL", [0, 0, 0, 0, 0, 0, 0, 0]));
 
   // UDT: array of stations, each holding a nested UDT of long arrays.
   // Reproduces the tag shape from issue #4.

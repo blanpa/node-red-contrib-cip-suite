@@ -64,6 +64,11 @@ function stringCapacity(template: any): number | null {
 const NUMERIC_TYPES = ["SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "REAL", "LREAL"];
 /** Of those, the names read with "an" ("an INT") */
 const AN_TYPES = ["INT"];
+/**
+ * Types whose arrays the library encodes in one write. For a BOOL array it sends the element
+ * count but a single byte, so a BOOL range has to go out one element at a time.
+ */
+const ARRAY_WRITE_TYPES = ["SINT", "USINT", "INT", "DINT", "REAL", "LINT"];
 
 module.exports = function (RED: any) {
   function CipWriteNode(this: any, config: any) {
@@ -277,9 +282,11 @@ module.exports = function (RED: any) {
             `Array range [${parsed.arrayStart}..${parsed.arrayEnd}] expects ${count} values, got ${value.length}`
           );
         }
-        // Every value is checked before anything is sent, then the range goes out as one
-        // write from the first element, so the controller takes all of it or none. Writing
-        // element by element left the earlier ones written when a later one failed.
+        // Every value is checked before anything is sent, so a bad value late in the list
+        // leaves the range unchanged. Where the library can encode the range, it goes out as
+        // one write from the first element and the controller takes all of it or none.
+        // Other types (BOOL) go element by element, as the library would send a broken
+        // multi-element write for them.
         const first = new Tag(`${parsed.baseName}[${parsed.arrayStart}]`);
         await controller.readTag(first); // init type
         for (let i = 0; i < count; i++) {
@@ -287,8 +294,17 @@ module.exports = function (RED: any) {
           checkDataType(first, elemName);
           assertValueFitsNumeric(first, value[i], elemName, true);
         }
-        first.value = value;
-        await controller.writeTag(first);
+        if (ARRAY_WRITE_TYPES.includes(first.type)) {
+          first.value = value;
+          await controller.writeTag(first);
+        } else {
+          for (let i = 0; i < count; i++) {
+            const elemTag = new Tag(`${parsed.baseName}[${parsed.arrayStart + i}]`);
+            await controller.readTag(elemTag); // init type
+            elemTag.value = value[i];
+            await controller.writeTag(elemTag);
+          }
+        }
         return {
           success: true,
           tagName,
