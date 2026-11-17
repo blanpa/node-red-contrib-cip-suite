@@ -17,9 +17,12 @@ jest.mock("st-ethernet-ip", () => {
     created: [] as any[],
     connectResult: "resolve" as "resolve" | "reject" | "hang",
     connectError: { generalStatusCode: 1, extendedStatus: [273] } as any,
+    /** Port the socket reports as connected to; by default the one the library dialled. */
+    remotePort: undefined as number | undefined,
     reset() {
       control.created = [];
       control.connectResult = "resolve";
+      control.remotePort = undefined;
     },
   };
 
@@ -36,10 +39,15 @@ jest.mock("st-ethernet-ip", () => {
       this.connectedMessaging = connectedMessaging;
       control.created.push(this);
     }
-    connect() {
-      if (control.connectResult === "reject") return Promise.reject(control.connectError);
-      if (control.connectResult === "hang") return new Promise(() => undefined);
-      return Promise.resolve();
+    dialedPort: number | null = null;
+    remotePort: number | undefined;
+    async connect() {
+      // Like ENIP.connect(), the port is read from the library's config after an await.
+      await Promise.resolve();
+      this.dialedPort = require("st-ethernet-ip/dist/config").EIP_PORT;
+      this.remotePort = control.remotePort ?? this.dialedPort ?? undefined;
+      if (control.connectResult === "reject") throw control.connectError;
+      if (control.connectResult === "hang") await new Promise(() => undefined);
     }
     disconnect() {
       this.disconnectCalls++;
@@ -589,21 +597,60 @@ describe("admin routes", () => {
 });
 
 describe("port (#18)", () => {
-  it("warns once that a configured port is ignored and reports 44818", async () => {
+  // A failed test must not leave an endpoint retrying, or jest never exits.
+  afterEach(async () => {
+    for (const n of Object.values(deployed)) await n.disconnect();
+  });
+
+  it("connects on the configured port and reports it", async () => {
+    const node = makeEndpoint({ port: 44819 });
+    expect(await connectAndWait(node)).toBeNull();
+    expect(control.created[0].dialedPort).toBe(44819);
+    expect(node.getStatus().port).toBe(44819);
+    expect(node.log).toHaveBeenCalledWith(expect.stringContaining("Connected to 10.0.0.1:44819"));
+  });
+
+  it("connects on 44818 by default", async () => {
+    const node = makeEndpoint();
+    expect(await connectAndWait(node)).toBeNull();
+    expect(control.created[0].dialedPort).toBe(44818);
+  });
+
+  it("keeps endpoints on different ports apart when they connect at the same time", async () => {
+    const a = makeEndpoint({ id: "a", port: 44819 });
+    const b = makeEndpoint({ id: "b", port: 44818 });
+    const c = makeEndpoint({ id: "c", port: 2222 });
+    const errs = await Promise.all([connectAndWait(a), connectAndWait(b), connectAndWait(c)]);
+    expect(errs).toEqual([null, null, null]);
+    expect(control.created.map((p: any) => p.dialedPort)).toEqual([44819, 44818, 2222]);
+  });
+
+  it("dials the configured port again after the connection drops", async () => {
+    const node = makeEndpoint({ port: 44819, autoConnect: true });
+    await connectAndWait(node);
+    const user = makeUser("u1");
+    node.register(user);
+    const reconnected = new Promise<void>((resolve) => user.once("cip:connected", () => resolve()));
+    control.created[0].emit("close");
+    await reconnected;
+    expect(control.created).toHaveLength(2);
+    expect(control.created[1].dialedPort).toBe(44819);
+  });
+
+  it("uses a port changed at runtime on the next connect", async () => {
     const node = makeEndpoint({ port: 44819 });
     await connectAndWait(node);
     await node.disconnect();
+    expect(node.setOptions({ port: 44820 })).toEqual(["port"]);
     await connectAndWait(node);
-
-    const warnings = node.warn.mock.calls.map((c: any[]) => c[0]);
-    expect(warnings.filter((w: string) => /Port 44819 is ignored/.test(w))).toHaveLength(1);
-    expect(node.getStatus().port).toBe(44818);
-    expect(node.log).toHaveBeenCalledWith(expect.stringContaining("Connected to 10.0.0.1:44818"));
+    expect(control.created[1].dialedPort).toBe(44820);
   });
 
-  it("stays quiet on the standard port", async () => {
-    const node = makeEndpoint();
-    await connectAndWait(node);
-    expect(node.warn).not.toHaveBeenCalledWith(expect.stringContaining("is ignored"));
+  it("fails the connect when the socket is on another port than configured", async () => {
+    control.remotePort = 44818;
+    const node = makeEndpoint({ port: 44819, retryInterval: 60000, maxRetryInterval: 60000 });
+    const err = await connectAndWait(node);
+    expect(err?.message).toMatch(/Connected on port 44818 instead of 44819/);
+    expect(node.connected).toBe(false);
   });
 });
