@@ -14,7 +14,7 @@ const ATOMIC_SIZE = {
   0xc2: 1, // SINT
   0xc3: 2, // INT
   0xc4: 4, // DINT
-  0xc6: 8, // LINT
+  0xc5: 8, // LINT
   0xca: 4, // REAL
 };
 

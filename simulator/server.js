@@ -573,7 +573,7 @@ function tagDataBuffer(tag) {
         buf.writeInt32LE(value | 0, i * 4);
         break;
       case CIP_TYPES.LINT:
-        buf.writeBigInt64LE(BigInt(Math.trunc(value)), i * 8);
+        buf.writeBigInt64LE(typeof value === "bigint" ? value : BigInt(Math.trunc(value)), i * 8);
         break;
       case CIP_TYPES.REAL:
         buf.writeFloatLE(value, i * 4);
@@ -895,6 +895,9 @@ function handleWriteTag(service, tagName, dataBuf) {
         case CIP_TYPES.DINT:
           item = dataBuf.readInt32LE(at);
           break;
+        case CIP_TYPES.LINT:
+          item = dataBuf.readBigInt64LE(at);
+          break;
         case CIP_TYPES.REAL:
           item = dataBuf.readFloatLE(at);
           break;
@@ -918,6 +921,9 @@ function handleWriteTag(service, tagName, dataBuf) {
       break;
     case CIP_TYPES.DINT:
       value = dataBuf.readInt32LE(4);
+      break;
+    case CIP_TYPES.LINT:
+      value = dataBuf.readBigInt64LE(4);
       break;
     case CIP_TYPES.REAL:
       value = dataBuf.readFloatLE(4);

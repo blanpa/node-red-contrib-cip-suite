@@ -21,7 +21,7 @@ const CIP_TYPES = {
   SINT: 0xc2,
   INT: 0xc3,
   DINT: 0xc4,
-  LINT: 0xc6,
+  LINT: 0xc5,
   REAL: 0xca,
   STRING: 0xd0
 };
