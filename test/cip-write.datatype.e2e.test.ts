@@ -477,3 +477,27 @@ describe("cip-write custom-length strings and members", () => {
     expect(msg.payload.error).toBe("MyIntArray[0] is an INT, so it cannot take an array");
   });
 });
+
+describe("cip-write LINT (#41)", () => {
+  it("reads MyLint as a LINT", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Tag } = require("st-ethernet-ip");
+    const tag = new Tag("MyLint");
+    await plc.readTag(tag);
+    expect(tag.type).toBe("LINT");
+  });
+
+  it("writes a LINT past the range of a DINT", async () => {
+    const { write } = makeWriteNode({ tagName: "MyLint", dataType: "LINT" });
+    const msg = await write({ payload: 5000000000 });
+    expect(msg.payload.success).toBe(true);
+    expect(await readValue("MyLint")).toBe(BigInt(5000000000));
+  });
+
+  it("names LINT when it refuses text", async () => {
+    const { write } = makeWriteNode({ tagName: "MyLint", dataType: "auto" });
+    const msg = await write({ payload: "Continue" });
+    expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("MyLint is a LINT, so it cannot take text");
+  });
+});
