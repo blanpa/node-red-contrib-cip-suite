@@ -11,6 +11,26 @@ const utils_1 = require("./utils");
 const endpoint_dynamic_1 = require("./endpoint-dynamic");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Tag, TagGroup } = require("st-ethernet-ip");
+/**
+ * Whether two scan values differ by more than the deadband. Arrays (a range such as
+ * "MyArray[0..2]") are compared element by element: the library builds a new array on every
+ * read, so comparing the arrays themselves would report a change on every scan.
+ */
+function valuesDiffer(current, last, deadband) {
+    if (Array.isArray(current) && Array.isArray(last)) {
+        return current.length !== last.length || current.some((v, i) => valuesDiffer(v, last[i], deadband));
+    }
+    if (typeof current === "number" && typeof last === "number") {
+        return Math.abs(current - last) > deadband;
+    }
+    return current !== last;
+}
+/** The type name for the output. st-ethernet-ip reports the name, other callers a code. */
+function typeLabel(type) {
+    if (typeof type === "string")
+        return type;
+    return (0, utils_1.cipTypeName)(typeof type === "number" ? type : 0);
+}
 module.exports = function (RED) {
     function CipSubscribeNode(config) {
         RED.nodes.createNode(this, config);
@@ -123,7 +143,20 @@ module.exports = function (RED) {
             const states = [];
             for (const name of tagNames) {
                 try {
-                    const tag = new Tag(name);
+                    // "MyArray[0..2]" is not a path the library accepts: read from the first element
+                    // for as many as the range holds, as cip-read does.
+                    const parsed = (0, utils_1.parseTagName)(name);
+                    let tag;
+                    if (parsed.isRange && parsed.arrayStart !== null && parsed.arrayEnd !== null) {
+                        if (parsed.arrayEnd < parsed.arrayStart) {
+                            throw new Error(`range [${parsed.arrayStart}..${parsed.arrayEnd}] ends before it starts`);
+                        }
+                        const count = parsed.arrayEnd - parsed.arrayStart + 1;
+                        tag = new Tag(`${parsed.baseName}[${parsed.arrayStart}]`, null, null, 0, 0, count);
+                    }
+                    else {
+                        tag = new Tag(name);
+                    }
                     group.add(tag);
                     states.push({
                         name,
@@ -221,21 +254,19 @@ module.exports = function (RED) {
             const tagDetails = [];
             for (const s of states) {
                 const currentValue = s.tag.value;
-                const typeName = (0, utils_1.cipTypeName)(s.tag.type || 0);
+                const typeName = typeLabel(s.tag.type);
                 let changed = false;
                 if (s.lastValue === undefined) {
                     // First read is always "changed"
                     changed = true;
                 }
-                else if (typeof currentValue === "number" && typeof s.lastValue === "number") {
-                    changed = Math.abs(currentValue - s.lastValue) > node.deadband;
-                }
                 else {
-                    changed = currentValue !== s.lastValue;
+                    changed = valuesDiffer(currentValue, s.lastValue, node.deadband);
                 }
                 s.changed = changed;
                 if (changed) {
-                    s.lastValue = currentValue;
+                    // A copy, since the library hands out arrays it may keep using.
+                    s.lastValue = Array.isArray(currentValue) ? [...currentValue] : currentValue;
                     anyChanged = true;
                 }
                 tagDetails.push({

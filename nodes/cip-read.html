@@ -112,7 +112,10 @@
     <li><b>Array element:</b> Use bracket notation, e.g. <code>MyArray[3]</code> reads element 3.</li>
     <li><b>Array range:</b> Use range notation, e.g. <code>MyArray[0..9]</code> or <code>MyStruct.Member[0..101]</code> reads elements 0 through N.</li>
     <li><b>UDT members:</b> Access members with dot notation, e.g. <code>MyUDT.MemberName</code>.</li>
-    <li><b>Whole array:</b> Give the tag on its own, e.g. <code>MyArray</code> or <code>MyStruct.Member</code>, to read every element. An array of UDTs yields one object per element.</li>
+    <li><b>Whole array:</b> Give the tag on its own, e.g. <code>MyArray</code> or <code>MyStruct.Member</code>, to read every element. An array of UDTs yields one object per element.
+      This needs the PLC tag list, which ControlLogix and CompactLogix provide. Without one (a Micro800) the node cannot tell that a bare name is an array
+      and returns element 0 only. There, read a range such as <code>MyArray[0..9]</code>, or set Data Type to <i>ARRAY</i> (the length is found automatically,
+      or set <code>msg.arraySize</code>). The write and subscribe nodes always treat a bare name as element 0, see their help.</li>
     <li><b>Strings:</b> Read the STRING tag itself, e.g. <code>Line1.LotName</code>, to get the
     text. Built-in and custom-length strings (STRING20 and so on) both return text.
     <code>.LEN</code> and <code>.DATA</code> are the tag's length and character array, so you
