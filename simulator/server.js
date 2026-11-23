@@ -859,27 +859,27 @@ function handleWriteTag(service, tagName, dataBuf) {
     if (type !== member.typeCode) return cipResponse(service, 0xff, undefined, 0x2107);
     const count = dataBuf.readUInt16LE(2);
     const bytes = dataBuf.slice(4);
-    // ...and one that carries more elements than the member has (0x15, too much data), or
-    // whose payload is not exactly `count` elements.
-    if (count > member.elementCount || bytes.length !== count * member.elementSize) {
-      return cipResponse(service, 0x15);
-    }
+    // ...one that carries more elements than the member has (0xFF with extended 0x2105,
+    // as for a read), and one whose payload is not exactly `count` elements (0x15, too
+    // much data).
+    if (count > member.elementCount) return cipResponse(service, 0xff, undefined, 0x2105);
+    if (bytes.length !== count * member.elementSize) return cipResponse(service, 0x15);
     bytes.copy(member.tag.data, member.byteOffset);
     console.log(`  WRITE ${tagName} (member) ${count} x ${member.elementSize} bytes`);
     return cipResponse(service, 0);
   }
 
   // Write to an array tag, or to elements of one ("MyIntArray[2]"): `count` elements go in
-  // from the subscript on. A controller refuses more elements than are left (0x15, too much
-  // data), and one whose payload is not exactly `count` elements.
+  // from the subscript on. A controller refuses more elements than are left (0xFF with
+  // extended 0x2105, seen on a Micro850), and one whose payload is not exactly `count`
+  // elements (0x15, too much data).
   const elements = resolveTagPath(tagName);
   if (elements && !elements.tag.structure && Array.isArray(elements.tag.value)) {
     if (type !== elements.typeCode) return cipResponse(service, 0xff, undefined, 0x2107);
     const count = dataBuf.readUInt16LE(2);
     const size = elements.elementSize;
-    if (count > elements.elementCount || dataBuf.length - 4 !== count * size) {
-      return cipResponse(service, 0x15);
-    }
+    if (count > elements.elementCount) return cipResponse(service, 0xff, undefined, 0x2105);
+    if (dataBuf.length - 4 !== count * size) return cipResponse(service, 0x15);
     const start = elements.byteOffset / size;
     for (let i = 0; i < count; i++) {
       const at = 4 + i * size;

@@ -2,7 +2,7 @@
  * Shared utilities for cip-suite nodes.
  */
 
-import { CIP_STATUS, CIP_TYPE_NAMES, NodeStatus } from "./types";
+import { CIP_STATUS, CIP_GENERAL_ERROR_EXTENDED, CIP_TYPE_NAMES, NodeStatus } from "./types";
 
 /**
  * Parse a tag name for special addressing:
@@ -351,7 +351,12 @@ export function describeCipError(err: any): string {
       Array.isArray(err.extendedStatus) && err.extendedStatus.length > 0
         ? `, extended ${err.extendedStatus.map((e: number) => hex(e, 4)).join(", ")}`
         : "";
-    return `${cipStatusText(err.generalStatusCode)} (CIP ${hex(err.generalStatusCode, 2)}${ext})`;
+    // 0xFF only says "general error": the reason is in the extended status (#43).
+    const reason =
+      err.generalStatusCode === 0xff && Array.isArray(err.extendedStatus)
+        ? CIP_GENERAL_ERROR_EXTENDED[err.extendedStatus[0]]
+        : undefined;
+    return `${reason || cipStatusText(err.generalStatusCode)} (CIP ${hex(err.generalStatusCode, 2)}${ext})`;
   }
 
   try {
