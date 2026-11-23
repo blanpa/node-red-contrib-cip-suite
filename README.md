@@ -71,6 +71,7 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | Simple | `MyTag` | Read/write a tag |
 | Bit access | `MyDint.5` | Read/write bit 5 of a DINT |
 | Array element | `MyArray[3]` | Single array element |
+| Bare array name | `MyArray` | Element 0 for writes and subscribe. cip-read returns the whole array when the endpoint has the PLC tag list (ControlLogix/CompactLogix), and element 0 on a Micro800 unless the range or `ARRAY` is used |
 | Array range | `MyArray[0..9]` | Read elements 0-9 via fragmented read |
 | Nested array range | `MyStruct.Member[0..101]` | Read a range of a UDT member array |
 | UDT member | `MyUDT.MemberName` | Read/write a single structure member |

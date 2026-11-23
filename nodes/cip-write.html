@@ -104,7 +104,11 @@
   <h3>Tag Addressing</h3>
   <ul>
     <li><b>Bit-level writes:</b> Use dot notation, e.g. <code>MyDint.5</code> writes bit 5 of a DINT tag.</li>
-    <li><b>Array writes:</b> Use bracket notation, e.g. <code>MyArray[3]</code>. Pass an array as <code>msg.payload</code> to write multiple elements.</li>
+    <li><b>Array writes:</b> Use bracket notation, e.g. <code>MyArray[3]</code> writes element 3. Pass an array as <code>msg.payload</code> to write multiple elements, starting at the element named:
+      <code>MyArray[2]</code> with <code>[1,2,3]</code> writes elements 2 to 4. A range such as <code>MyArray[0..2]</code> takes an array of exactly that length.</li>
+    <li><b>Bare array name:</b> A tag name on its own addresses element 0, whatever the controller reports. A single value written to <code>MyArray</code> changes element 0 only,
+      and an array payload is written from element 0. The read node can return the whole array for the same name when the PLC tag list is available (see its help),
+      so write <code>MyArray[0..N]</code> to put back the elements you read.</li>
     <li><b>UDT writes:</b> Access UDT members with dot notation, e.g. <code>MyUDT.MemberName</code>,
     or send an object to a UDT tag, e.g. <code>{ "Speed": 50 }</code>. Only the members in the
     object change; the rest keep their current value. Nested UDTs work the same way, and an
