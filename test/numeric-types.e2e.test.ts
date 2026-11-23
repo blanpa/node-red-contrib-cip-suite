@@ -27,12 +27,13 @@ function waitForSimReady(proc: ChildProcess, timeoutMs: number): Promise<void> {
 }
 
 /** A cip-write node wired to the live controller; write() resolves with the sent msg. */
-function makeWriteNode(config: Record<string, any>) {
+function makeWriteNode(config: Record<string, any>, endpointExtras: Record<string, any> = {}) {
   const endpoint = {
     connected: true,
     getController: () => plc,
     register: () => {},
     deregister: () => {},
+    ...endpointExtras,
   };
   const RED: any = {
     nodes: {
@@ -208,5 +209,46 @@ describe("bit access", () => {
     const bit = makeWriteNode({ tagName: "MyUdint.31", dataType: "auto" });
     expect((await bit.write({ payload: true })).payload.success).toBe(true);
     expect((await readTag("MyUdint")).value).toBe(2147483648);
+  });
+});
+
+describe("atomic bit write", () => {
+  /** Run an atomic bit write and return the masks the endpoint was asked to apply. */
+  async function atomicMasks(tagName: string, bit: number, value: boolean) {
+    const calls: Array<{ name: string; orMask: Buffer; andMask: Buffer }> = [];
+    const { write } = makeWriteNode(
+      { tagName: `${tagName}.${bit}`, dataType: "auto", useAtomicBitWrite: true },
+      {
+        readModifyWriteTag: async (name: string, orMask: Buffer, andMask: Buffer) => {
+          calls.push({ name, orMask, andMask });
+        },
+      }
+    );
+    const msg = await write({ payload: value });
+    expect(msg.payload.success).toBe(true);
+    expect(calls).toHaveLength(1);
+    return calls[0];
+  }
+
+  it.each([
+    ["MyUsint", 1],
+    ["MyUint", 2],
+    ["MyByte", 1],
+    ["MyWord", 2],
+    ["MyUdint", 4],
+    ["MyDint", 4],
+    ["MyInt", 2],
+  ])("sizes the masks for %s at %i bytes", async (tagName, size) => {
+    const { name, orMask, andMask } = await atomicMasks(tagName, 3, true);
+    expect(name).toBe(tagName);
+    expect(orMask.length).toBe(size);
+    expect(andMask.length).toBe(size);
+    expect(orMask[0]).toBe(0b1000);
+  });
+
+  it("clears a bit with the AND mask", async () => {
+    const { orMask, andMask } = await atomicMasks("MyUint", 9, false);
+    expect([...orMask]).toEqual([0, 0]);
+    expect([...andMask]).toEqual([0xff, 0xfd]);
   });
 });

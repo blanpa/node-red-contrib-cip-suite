@@ -159,15 +159,20 @@ module.exports = function (RED: any) {
     /**
      * Determine the byte size of a CIP data type for bit mask operations.
      */
-    function getTypeByteSize(typeCode: any): number {
-      const code = typeof typeCode === "object" && typeCode !== null ? typeCode.code : typeCode;
+    function getTypeByteSize(type: any): number {
+      // st-ethernet-ip's tag.type is the type name ("UINT"); a numeric code or a {code}
+      // object is accepted too.
+      const raw = typeof type === "object" && type !== null ? type.code : type;
+      const code = typeof raw === "number" ? raw : CIPDataType[String(raw) as keyof typeof CIPDataType];
       switch (code) {
         case CIPDataType.BOOL:
         case CIPDataType.SINT:
         case CIPDataType.USINT:
+        case CIPDataType.BYTE:
           return 1;
         case CIPDataType.INT:
         case CIPDataType.UINT:
+        case CIPDataType.WORD:
           return 2;
         case CIPDataType.DINT:
         case CIPDataType.UDINT:
@@ -175,6 +180,7 @@ module.exports = function (RED: any) {
         case CIPDataType.DWORD:
           return 4;
         case CIPDataType.LINT:
+        case CIPDataType.ULINT:
         case CIPDataType.LREAL:
         case CIPDataType.LWORD:
           return 8;
