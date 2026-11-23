@@ -6,6 +6,7 @@
  * @module cip-subscribe
  */
 
+import "./st-type-patch";
 import {
   CipEndpointNode,
   CipSubscribeConfig,

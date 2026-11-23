@@ -11,6 +11,7 @@
  * @module cip-endpoint
  */
 
+import "./st-type-patch";
 import {
   CipEndpointConfig,
   ConnectionMetrics,

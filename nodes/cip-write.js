@@ -13,6 +13,7 @@
  * @module cip-write
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./st-type-patch");
 const types_1 = require("./types");
 const utils_1 = require("./utils");
 const endpoint_dynamic_1 = require("./endpoint-dynamic");
@@ -37,14 +38,20 @@ function stringCapacity(template) {
     return typeof size === "number" && size > 0 ? size : null;
 }
 /** Types the library writes as a number, whatever the value is. */
-const NUMERIC_TYPES = ["SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "REAL", "LREAL"];
+const NUMERIC_TYPES = [
+    "SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "ULINT", "REAL", "LREAL",
+    "BYTE", "WORD", "LWORD",
+];
 /** Of those, the names read with "an" ("an INT") */
 const AN_TYPES = ["INT"];
 /**
  * Types whose arrays the library encodes in one write. For a BOOL array it sends the element
  * count but a single byte, so a BOOL range has to go out one element at a time.
  */
-const ARRAY_WRITE_TYPES = ["SINT", "USINT", "INT", "DINT", "REAL", "LINT"];
+const ARRAY_WRITE_TYPES = [
+    "SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "ULINT", "REAL", "LREAL",
+    "BYTE", "WORD", "LWORD",
+];
 module.exports = function (RED) {
     function CipWriteNode(config) {
         RED.nodes.createNode(this, config);
@@ -156,6 +163,7 @@ module.exports = function (RED) {
                 case "SINT":
                     return { bits: 8, signed: true };
                 case "USINT":
+                case "BYTE":
                     return { bits: 8, signed: false };
                 case "INT":
                     return { bits: 16, signed: true };
@@ -165,7 +173,6 @@ module.exports = function (RED) {
                 case "DINT":
                     return { bits: 32, signed: true };
                 case "UDINT":
-                case "DWORD":
                     return { bits: 32, signed: false };
                 default:
                     throw new Error(`Bit access is not supported on ${typeName} tags`);

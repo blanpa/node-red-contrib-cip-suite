@@ -7,6 +7,7 @@
  * @module cip-subscribe
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./st-type-patch");
 const utils_1 = require("./utils");
 const endpoint_dynamic_1 = require("./endpoint-dynamic");
 // eslint-disable-next-line @typescript-eslint/no-var-requires

@@ -13,6 +13,7 @@
  * @module cip-read
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./st-type-patch");
 const types_1 = require("./types");
 const utils_1 = require("./utils");
 const tag_array_1 = require("./tag-array");
