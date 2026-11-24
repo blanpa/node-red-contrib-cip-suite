@@ -301,6 +301,11 @@ export function buildBitMasks(
   bitIndex: number,
   bitValue: boolean
 ): { orMask: Buffer; andMask: Buffer } {
+  const bits = byteSize * 8;
+  if (!Number.isInteger(bitIndex) || bitIndex < 0 || bitIndex >= bits) {
+    throw new RangeError(`Bit ${bitIndex} is out of range for a ${bits}-bit value (0-${bits - 1})`);
+  }
+
   const orMask = Buffer.alloc(byteSize, 0x00);
   const andMask = Buffer.alloc(byteSize, 0xff);
 
