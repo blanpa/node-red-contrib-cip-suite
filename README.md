@@ -35,9 +35,9 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 |------|------|-------------|
 | **cip-endpoint** | Config | Shared TCP session to a Logix PLC. Auto-reconnect, Micro800 support, multi-hop routing. |
 | **cip-read** | In/Out | Read tag values. Supports bit access (`Tag.5`), array elements (`Tag[3]`), array ranges (`Tag[0..9]`), UDT/structures, batch reads, and polling. |
-| **cip-write** | In/Out | Write tag values. Supports bit-level writes (atomic via CIP 0x4E or software RMW), arrays, UDT partial merge, text to STRING tags, batch writes. |
+| **cip-write** | In/Out | Write tag values. Supports bit-level writes (read-modify-write), array elements and ranges, UDT partial merge, text to STRING tags, batch writes. |
 | **cip-browse** | In/Out | Discover tags on the PLC. Glob/regex filtering, UDT detection, program-scoped tags. |
-| **cip-subscribe** | Out | Continuous cyclic multi-tag scanning via `readTagGroup()`. Deadband filtering, report-by-exception, runtime reconfiguration. |
+| **cip-subscribe** | Out | Continuous cyclic multi-tag scanning via `readTagGroup()`. Array ranges (`Tag[0..9]`), deadband filtering, report-by-exception, runtime reconfiguration. |
 | **cip-controller** | In/Out | Read controller identity, mode, fault status, keyswitch, tag count. Read-only: no mode change or fault reset. |
 | **cip-raw** | In/Out | Send raw CIP service requests. Supports Multiple Service Packet (0x0A). Full response parsing with human-readable status codes. |
 | **cip-discover** | In/Out | UDP broadcast ListIdentity for network device discovery. Standalone — no endpoint required. |
@@ -72,7 +72,7 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | Bit access | `MyDint.5` | Read/write bit 5 of a DINT |
 | Array element | `MyArray[3]` | Single array element |
 | Bare array name | `MyArray` | Element 0 for writes and subscribe. cip-read returns the whole array when the endpoint has the PLC tag list (ControlLogix/CompactLogix), and element 0 on a Micro800 unless the range or `ARRAY` is used |
-| Array range | `MyArray[0..9]` | Read elements 0-9 via fragmented read |
+| Array range | `MyArray[0..9]` | Elements 0-9 as an array: read, write (an array of exactly that length) and subscribe |
 | Nested array range | `MyStruct.Member[0..101]` | Read a range of a UDT member array |
 | UDT member | `MyUDT.MemberName` | Read/write a single structure member |
 | Whole UDT/STRUCT | `MyUDT` | Full structure as an object (needs tag list) |
@@ -99,12 +99,16 @@ only handles part of that list, so the rest is added by `src/st-type-patch.ts`.
 
 | Type | Value in `msg.payload` |
 |------|------------------------|
+| BOOL | boolean |
+| SINT, INT, DINT, REAL | number |
 | USINT, UINT, UDINT, BYTE, WORD | number |
 | LREAL | number (double) |
 | LINT, ULINT, LWORD | BigInt. A write also takes a number or digit text, which keeps values past 2^53 exact |
 
-Out of range values are refused before anything is sent. Bit access is not available on
-ULINT, LREAL and LWORD. A write of an LREAL, BYTE, WORD or LWORD array too big for one packet
+Out of range values are refused before anything is sent. So is text on a numeric tag
+(`MyDint is a DINT, so it cannot take text`), which the library would otherwise write as 0;
+numeric text such as `"65"` is written as the number. Bit access is not available on
+LINT, ULINT, REAL, LREAL and LWORD. A write of an LREAL, BYTE, WORD or LWORD array too big for one packet
 (roughly 60 LREAL or LWORD, 240 WORD elements) fails, because the library only fragments those
 writes for the types it knows.
 
@@ -290,8 +294,39 @@ write keeps both halves on the same controller.
 ### Backpressure Protection
 All nodes skip subsequent requests while a previous one is in-flight, preventing PLC overload.
 
-### Atomic Bit Operations
-Write nodes support CIP Read-Modify-Write service (0x4E) for safe bit manipulation without race conditions.
+### Bit Writes
+A bit write such as `MyDint.5` (or `B3:0/5` on the PCCC nodes) reads the tag, changes the bit
+and writes the whole value back. A change the controller makes to the same tag between the
+two requests is lost, so do not use bit writes on a word the PLC program writes as well.
+A bit index past the tag's width (`MyInt.16`) is refused, and so is bit access on a type
+without bits (REAL, LREAL, LINT, ULINT, LWORD, STRING).
+
+cip-write also implements the CIP Read-Modify-Write service (0x4E), which changes the bit in
+a single request. There is no option for it in the editor: it is only used when the node's
+flow JSON carries `"useAtomicBitWrite": true`, and it falls back to the read and write above
+if the controller refuses it. It is covered by tests against a mock endpoint only, not on a
+controller.
+
+### CIP Errors
+A request the controller refuses reaches the flow as readable text with the raw codes.
+cip-read fails with an error a Catch node receives, e.g.
+`Read failed: Path destination unknown (CIP 0x05)`. cip-write does the same and also sends a
+message whose `payload` carries `success: false`, `error`, `generalStatusCode` and
+`extendedStatus`, so a flow can branch on the codes (see [cip-write Output](#cip-write-output)).
+
+General status `0xFF` only says "general error". For a tag read or write the reason is in the
+extended status, and the text names it:
+
+| Extended | Text | Usually means |
+|----------|------|---------------|
+| `0x2104` | Offset is past the end of the tag | A fragmented read or write that starts beyond the tag |
+| `0x2105` | Access goes past the end of the tag | More elements than the array has left, e.g. 5 values written to `MyArray[8]` of a 10 element array |
+| `0x2107` | Data type does not match the tag | The value was sent with another type than the tag has |
+
+All three were seen on a Micro850. Known issue: a range **read** past the end of an array
+(`MyArray[8..14]` on 10 elements) does not report `0x2105` yet. It fails with an unrelated
+message and can disturb the next read
+([#51](https://github.com/blanpa/node-red-contrib-cip-suite/issues/51)).
 
 ### Admin HTTP Endpoints
 - `GET /cip-endpoint/:id/browse` — browse tags from a deployed endpoint
@@ -332,7 +367,7 @@ docker compose up -d
 
 Each profile provides a realistic tag set:
 
-- **ControlLogix** — scalars (BOOL, INT, DINT, REAL, LINT), arrays (`MyIntArray` INT[10], `MyRealArray` REAL[5]), program-scoped tags (`Program:MainProgram.Speed`, `Program:MainProgram.Recipe` INT[8]), a STRING tag `MyString`, a UDT `testVarUDT` with two STRING members and an INT, and a nested UDT array `FIS_Stn : FIS_STATION[5]` whose `Local` member holds `FBCONTROL DINT[2]`, `FBFACTUAL REAL[102]`, `FBCOMPARE REAL[102]` and `FBRESULT DINT[2]` — 832 bytes per element, so struct reads exercise fragmentation
+- **ControlLogix** — scalars (BOOL, INT, DINT, REAL, LINT), the unsigned, LREAL and bit-string types (`MyUsint`, `MyUint`, `MyUdint`, `MyUlint`, `MyLreal`, `MyByte`, `MyWord`, `MyLword`), arrays (`MyIntArray` INT[10], `MyRealArray` REAL[5], `MyBoolArray` BOOL[8], `MyUintArray`, `MyUdintArray`, `MyUlintArray` and `MyLrealArray` with 4 elements each), program-scoped tags (`Program:MainProgram.Speed`, `Program:MainProgram.Recipe` INT[8]), a STRING tag `MyString`, a custom-length string `MyString20` (STRING20) and an array of them `MyStrings` STRING20[3], a UDT `Line1` with a DINT and a STRING20 (`Line1.LotName`), a UDT `testVarUDT` with two STRING members and an INT, and a nested UDT array `FIS_Stn : FIS_STATION[5]` whose `Local` member holds `FBCONTROL DINT[2]`, `FBFACTUAL REAL[102]`, `FBCOMPARE REAL[102]` and `FBRESULT DINT[2]` — 832 bytes per element, so struct reads exercise fragmentation
 - **CompactLogix** — Same as CLX
 - **Micro800** — 24 I/O tags (10 DO + 14 DI, all BOOL)
 - **MicroLogix** — PCCC registers (N7, F8, B3, T4, C5, S)
@@ -392,14 +427,16 @@ Tests cover:
 - Tag path canonicalisation against the controller's tag list and UDT templates
 - Array length resolution (Symbol Object dimensions, bisecting index probe, caching)
 - Bit manipulation (getBit, setBit, buildBitMasks)
-- CIP status/type name resolution, including Connection Manager extended status
+- CIP status/type name resolution, including Connection Manager extended status and the reason behind a general error (`0xFF`)
 - PCCC address parsing (all file types, sub-elements, bit access)
 - PCCC command building and response parsing
 - CIP path building (8-bit/16-bit segments, attributeId edge cases)
 - **Forward_Open framing** — strict PowerFlex 525 acceptance (transport byte, Connection Point vs Instance segments, electronic key parsing)
 - **cip-read end-to-end** — the real node reads whole arrays, nested UDTs, arrays of UDTs, ranges, program-scoped tags and batches from the ControlLogix simulator, over fragmented responses
 - **numeric types** — buffer encoding and decoding for every unsigned, LREAL and bit-string type, plus the real cip-write node against the simulator: scalars, arrays, bit access and out of range refusal
-- **cip-write end-to-end** — the real node writes against the ControlLogix simulator: the Data Type check, bit writes including the sign bit, partial UDT writes, and text to STRING tags and STRING members (empty, non-ASCII, full length, too long)
+- **cip-write end-to-end** — the real node writes against the ControlLogix simulator: the Data Type check, bit writes including the sign bit, partial UDT writes, text to STRING tags and STRING members (empty, non-ASCII, full length, too long), text refused on numeric tags, array elements and ranges (all or nothing), and a write past the end of an array
+- **cip-subscribe end-to-end** — the real node scans the simulator: array ranges alone and among other tags, no repeat message while nothing changes, and a change to one element of a range
+- **cip-endpoint port end-to-end** — two simulators on ports other than 44818: connect and read, two endpoints connecting at the same time, and a reconnect on the configured port after the controller went away
 - **cip-io-scanner end-to-end** — the real node drives the PowerFlex 525 simulator over TCP ForwardOpen + cyclic UDP I/O, asserting the connection establishes, data flows both directions, and a refused connection surfaces its extended status
 
 To exercise implicit I/O manually without Docker, run the drive simulator directly and point a `cip-io-scanner` node (Output 2 / Input 1 / Config 6, sizes 4 / 8, Run/Idle on) at `127.0.0.1:44818`:
@@ -444,6 +481,33 @@ could not be read carries an `error` string instead of a value:
 }
 ```
 
+### cip-write Output
+
+```json
+{
+  "payload": { "success": true, "tagName": "MyDint", "value": 42, "timestamp": 1710000000000 }
+}
+```
+
+A refused write also raises an error for a Catch node. `generalStatusCode` and
+`extendedStatus` are present when the controller refused the write, and absent when the node
+refused it before sending (text on a numeric tag, a value out of range):
+
+```json
+{
+  "payload": {
+    "success": false,
+    "tagName": "MyIntArray[8]",
+    "error": "Access goes past the end of the tag (CIP 0xff, extended 0x2105)",
+    "generalStatusCode": 255,
+    "extendedStatus": [8453],
+    "timestamp": 1710000000000
+  }
+}
+```
+
+A batch write (`msg.tags`) puts one such result per tag into a `payload` array.
+
 ### cip-subscribe Output
 
 Single tag:
@@ -453,18 +517,21 @@ Single tag:
   "tagName": "MyDint",
   "dataType": "DINT",
   "changed": true,
+  "tags": [{ "name": "MyDint", "value": 42, "type": "DINT", "changed": true }],
   "scanRate": 1000,
   "timestamp": 1710000000000
 }
 ```
 
-Multi-tag:
+Multi-tag. A range appears under the name as it was written, as an array. With **Change
+Only** on, `tags` lists only the tags that changed, while `payload` holds every tag:
 ```json
 {
-  "payload": { "Tag1": 42, "Tag2": 3.14 },
+  "payload": { "Tag1": 42, "Tag2": 3.14, "MyArray[0..2]": [100, 200, 300] },
   "tags": [
     { "name": "Tag1", "value": 42, "type": "DINT", "changed": true },
-    { "name": "Tag2", "value": 3.14, "type": "REAL", "changed": false }
+    { "name": "Tag2", "value": 3.14, "type": "REAL", "changed": false },
+    { "name": "MyArray[0..2]", "value": [100, 200, 300], "type": "INT", "changed": false }
   ],
   "scanRate": 1000,
   "timestamp": 1710000000000
@@ -552,7 +619,7 @@ several releases exist because someone described a bug well enough to reproduce 
 
 | | Contribution |
 |---|---|
-| [@Steve-Mcl](https://github.com/Steve-Mcl) (Stephen McLaughlin) | Dynamic/runtime connection management ([#12](https://github.com/blanpa/node-red-contrib-cip-suite/pull/12), [#10](https://github.com/blanpa/node-red-contrib-cip-suite/issues/10)), the connection lifecycle rework that made a dropped PLC detectable at all ([#11](https://github.com/blanpa/node-red-contrib-cip-suite/pull/11)), and the tag browse fix ([#13](https://github.com/blanpa/node-red-contrib-cip-suite/pull/13)) |
+| [@Steve-Mcl](https://github.com/Steve-Mcl) (Stephen McLaughlin) | Dynamic/runtime connection management ([#12](https://github.com/blanpa/node-red-contrib-cip-suite/pull/12), [#10](https://github.com/blanpa/node-red-contrib-cip-suite/issues/10)), the connection lifecycle rework that made a dropped PLC detectable at all ([#11](https://github.com/blanpa/node-red-contrib-cip-suite/pull/11)), the tag browse fix ([#13](https://github.com/blanpa/node-red-contrib-cip-suite/pull/13)), the guard against text on numeric tags ([#39](https://github.com/blanpa/node-red-contrib-cip-suite/pull/39)), array ranges in cip-subscribe ([#47](https://github.com/blanpa/node-red-contrib-cip-suite/pull/47)) and the unsigned, LREAL and bit-string types ([#48](https://github.com/blanpa/node-red-contrib-cip-suite/pull/48)), each checked on a Micro850 |
 | [@cgraun](https://github.com/cgraun) | Reported that arrays returned only their first element ([#4](https://github.com/blanpa/node-red-contrib-cip-suite/issues/4)), which uncovered the UDT array, tag casing and program scope bugs fixed in 0.0.7 |
 | [@rmsems](https://github.com/rmsems) | Reported the PowerFlex 525 drive control gaps ([#3](https://github.com/blanpa/node-red-contrib-cip-suite/issues/3)), which led to the extended Forward_Open diagnostics and the drive simulator profile |
 | [@QvixoteRoux](https://github.com/QvixoteRoux) | Fixed bit writes on the sign bit of INT and SINT tags and verified them on a 1769-L36ERM ([#35](https://github.com/blanpa/node-red-contrib-cip-suite/pull/35)) |

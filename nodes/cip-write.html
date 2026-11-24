@@ -82,13 +82,21 @@
     <dd>Optional override for the configured tag name.</dd>
   </dl>
   <p>For batch writes, set <code>msg.tags</code> to an array of objects, each with <code>name</code>
-  and <code>value</code> properties. All tags are written in a single operation.</p>
+  and <code>value</code> properties. The tags are written one after another.</p>
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload.success <span class="property-type">boolean</span></dt>
     <dd>Whether the write was successful.</dd>
     <dt>payload.tagName <span class="property-type">string</span></dt>
     <dd>The tag that was written.</dd>
+    <dt>payload.value <span class="property-type">*</span></dt>
+    <dd>The value that was written. Only on success.</dd>
+    <dt>payload.error <span class="property-type">string</span></dt>
+    <dd>Why the write failed, e.g. <code>Access goes past the end of the tag (CIP 0xff, extended 0x2105)</code>.
+    Only on failure. A failed write also raises an error that a Catch node receives.</dd>
+    <dt>payload.generalStatusCode, payload.extendedStatus <span class="property-type">number, array</span></dt>
+    <dd>The CIP status codes, when the controller refused the write. They are absent when the node
+    refused the value before sending it.</dd>
     <dt>payload.timestamp <span class="property-type">number</span></dt>
     <dd>Unix timestamp (ms) of the write.</dd>
   </dl>
@@ -103,9 +111,17 @@
   from the connected PLC. The endpoint must be deployed and connected first.</p>
   <h3>Tag Addressing</h3>
   <ul>
-    <li><b>Bit-level writes:</b> Use dot notation, e.g. <code>MyDint.5</code> writes bit 5 of a DINT tag.</li>
+    <li><b>Bit-level writes:</b> Use dot notation, e.g. <code>MyDint.5</code> writes bit 5 of a DINT tag. The node reads the tag,
+      changes the bit and writes the whole value back, so a change the controller makes in between is lost.
+      A bit index past the tag's width (<code>MyInt.16</code>) fails, and so does bit access on REAL, LREAL, LINT, ULINT, LWORD and STRING tags.</li>
+    <li><b>Numeric types:</b> BOOL, SINT, USINT, INT, UINT, DINT, UDINT, LINT, ULINT, REAL, LREAL, BYTE, WORD and LWORD can be written.
+      A value out of an integer type's range fails the write. So does text on a numeric tag, e.g. <code>MyDint is a DINT, so it cannot take text</code>;
+      numeric text such as <code>"65"</code> is written as the number. LINT, ULINT and LWORD take a BigInt, a number or digit text;
+      use digit text or a BigInt for values past 2^53.</li>
     <li><b>Array writes:</b> Use bracket notation, e.g. <code>MyArray[3]</code> writes element 3. Pass an array as <code>msg.payload</code> to write multiple elements, starting at the element named:
-      <code>MyArray[2]</code> with <code>[1,2,3]</code> writes elements 2 to 4. A range such as <code>MyArray[0..2]</code> takes an array of exactly that length.</li>
+      <code>MyArray[2]</code> with <code>[1,2,3]</code> writes elements 2 to 4. A range such as <code>MyArray[0..2]</code> takes an array of exactly that length.
+      Every value is checked first, so a bad value leaves the array unchanged. More values than the array has left fail with
+      <code>Access goes past the end of the tag</code>.</li>
     <li><b>Bare array name:</b> A tag name on its own addresses element 0, whatever the controller reports. A single value written to <code>MyArray</code> changes element 0 only,
       and an array payload is written from element 0. The read node can return the whole array for the same name when the PLC tag list is available (see its help),
       so write <code>MyArray[0..N]</code> to put back the elements you read.</li>
@@ -123,7 +139,8 @@
   </ul>
   <h3>Batch Mode</h3>
   <p>Send <code>msg.tags</code> as an array of <code>{ name: "TagName", value: 42 }</code> objects to
-  write multiple tags in one operation. The output <code>msg.payload</code> will contain results for each tag.</p>
+  write several tags, one after another. The output <code>msg.payload</code> is an array with one result per tag, in the order given.
+  A tag that fails carries <code>success: false</code> and an <code>error</code>, and the remaining tags are still written.</p>
 
   <h3>Dynamic control</h3>
   <p>The PLC connection can be selected, re-pointed and controlled at runtime with

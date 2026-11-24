@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.2.3 — 2026-11-24
+
+Thanks to [@Steve-Mcl](https://github.com/Steve-Mcl) for most of this release: the reports
+(#18, #38, #46), the findings behind #42 and #43, the fixes in #39, #47 and #48, and the
+checks on a Micro850.
+
+Tested with unit tests and end-to-end against the bundled simulator. On a Micro850, Steve
+checked the text guard and array writes (#39), array ranges in cip-subscribe (#47), USINT,
+UINT, UDINT, ULINT and LREAL (#48) and the three error codes of #50. **Not tested on real
+hardware: the Port setting (#44), a BOOL range write, the raw BYTE, WORD and LWORD type codes
+(`0xD1`, `0xD2`, `0xD4`), arrays of USINT and ULINT, and fragmented writes of the new types.
+Nothing in this release is known to have run on a ControlLogix or CompactLogix.**
+
+### Added
+
+- **cip-read, cip-write, cip-subscribe** — **Unsigned, LREAL and bit-string types.** USINT,
+  UINT, UDINT, ULINT, LREAL, BYTE, WORD and LWORD can be read and written, as scalars and
+  arrays, with bit access on the types of up to 32 bits. Before, UDINT, ULINT and LREAL could
+  not be read and UINT could not be written, because st-ethernet-ip has no case for them.
+  ULINT and LWORD are BigInt, like LINT. A Micro800 reports its BYTE, WORD, DWORD and LWORD
+  variables as USINT, UINT, UDINT and ULINT. An LREAL, BYTE, WORD or LWORD array too big for
+  one packet cannot be written yet. See "Numeric data types" in the README. (#42, #48)
+
+### Fixed
+
+- **cip-endpoint** — **The Port setting was ignored.** The endpoint always connected on
+  44818. It now connects on the configured port, also on a reconnect and with several
+  endpoints on different ports, and fails with a clear error if the socket ends up on another
+  port. (#18, #44)
+- **cip-write** — **Text written to a numeric tag reported success and wrote 0** (NaN for a
+  REAL). It is now refused, e.g. `MyDint is a DINT, so it cannot take text`. Numeric text
+  such as `"65"` is still written as the number. For a SINT the error points at the STRING
+  tag, since a SINT is usually the `.DATA` member of a STRING. (#38, #39)
+- **cip-write** — **A range write with a bad value left the earlier elements written.**
+  Every value is now checked first and the range goes out as one write, so the controller
+  takes all of it or none. A BOOL range is written element by element, after the same check.
+  (#39)
+- **cip-write** — **A write past the end of an array gave an unreadable error**,
+  `Unknown (0xff) (CIP 0xff, extended 0x2105)`. It now reads `Access goes past the end of
+  the tag (CIP 0xff, extended 0x2105)`. Extended status `0x2104` and `0x2107` are named as
+  well. The codes stay in `generalStatusCode` and `extendedStatus`. (#43, #50)
+- **cip-subscribe** — **Array ranges such as `MyArray[0..2]` were dropped** with only a log
+  warning. They are now read and appear in the output under the name as written. A backwards
+  range logs a warning that names the tag. (#46, #47)
+- **cip-subscribe** — **Arrays are compared element by element**, with the deadband applied
+  to each element, so Change Only does not send on every scan. (#47)
+- **cip-subscribe** — **`msg.tags[].type` was `0xREAL`.** It is now `REAL`. (#47)
+- **cip-write** — **Atomic bit write masks had the wrong size.** They were 4 bytes for every
+  type. They now follow the tag's type, and a bit index past its width is refused. This path
+  has no option in the editor and is only used with `"useAtomicBitWrite": true` in the flow
+  JSON; it is tested against a mock endpoint only. (#48)
+- **Type names** — `0xD1` to `0xD4` are now BYTE, WORD, DWORD and LWORD, as in the CIP type
+  table. The library and this package had them shifted by one. A tag reported as `0xD3` is
+  still read as an array of 32 booleans, which is what a Logix BOOL array needs. (#48)
+
+### Changed
+
+- **Help and README** — the cip-subscribe help described a `msg.changed` the node never
+  sent, and listed `start`, `stop` and `restart` as plain inputs. It now describes `msg.tags`,
+  `msg.action` and the Dynamic option. The cip-read, cip-write and cip-subscribe help and the
+  README say what a bare array name addresses: element 0 for writes and subscribe, the whole
+  array for cip-read when the endpoint has a tag list. The README no longer presents atomic
+  bit writes as a general feature, and documents the write result and the CIP error texts.
+  (#47)
+- **Simulator** — LINT has its own type code (`0xC5`, it was `0xC6`) and stores what is
+  written to it. A write to a UDT member changes the parent structure. A write with more
+  elements than a tag has left is answered with `0xFF`/`0x2105`. New tags for the unsigned,
+  LREAL and bit-string types, a BOOL array and STRING20. (#41, #45)
+
+### Known issues
+
+- **cip-read** — a range read past the end of an array (`MyArray[8..14]` on 10 elements)
+  fails with an unrelated message and can disturb the next read. (#51)
+
 ## 0.2.2 — 2026-11-12
 
 Thanks to [@giovannapalomba](https://github.com/giovannapalomba) for the report behind this

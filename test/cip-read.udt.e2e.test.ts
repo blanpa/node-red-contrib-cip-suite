@@ -11,8 +11,7 @@ import * as path from "path";
 
 const SIM = path.join(__dirname, "..", "simulator", "server.js");
 const READ_NODE = path.join(__dirname, "..", "nodes", "cip-read.js");
-// st-ethernet-ip always dials the standard EtherNet/IP port, so the simulator
-// has to listen on it for this suite.
+// The simulator listens on the standard EtherNet/IP port for this suite.
 const TCP_PORT = 44818;
 
 let sim: ChildProcess;

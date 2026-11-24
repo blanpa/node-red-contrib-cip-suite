@@ -98,6 +98,11 @@
     <li><b>ARRAY</b> — read the full array. Override the length with <code>msg.arraySize</code>.</li>
   </ul>
   </p>
+  <p><b>Values:</b> BOOL is a boolean. SINT, USINT, INT, UINT, DINT, UDINT, REAL, LREAL, BYTE and WORD are numbers.
+  LINT, ULINT and LWORD are BigInt, since they do not fit a JavaScript number. A Micro800 reports its BYTE, WORD, DWORD and
+  LWORD variables as USINT, UINT, UDINT and ULINT.</p>
+  <p><b>Errors:</b> a read the controller refuses raises an error that a Catch node receives, with the CIP status as text and code,
+  e.g. <code>Read failed: Path destination unknown (CIP 0x05)</code>. No message is sent.</p>
   <p><b>Array lengths</b> come from the UDT template for a member array such as
   <code>MyStruct.Member</code>, and otherwise from the controller's Symbol Object (array
   dimensions) in a single request — the tag list does not carry the length of a

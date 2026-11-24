@@ -7,7 +7,7 @@ import * as path from "path";
 
 const SIM = path.join(__dirname, "..", "simulator", "server.js");
 const SUBSCRIBE_NODE = path.join(__dirname, "..", "nodes", "cip-subscribe.js");
-// st-ethernet-ip always dials the standard EtherNet/IP port.
+// The simulator listens on the standard EtherNet/IP port.
 const TCP_PORT = 44818;
 
 let sim: ChildProcess;
