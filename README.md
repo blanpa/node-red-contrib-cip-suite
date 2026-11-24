@@ -91,6 +91,39 @@ tag list is available; `ARRAY` forces a full array read; `STRUCT` forces UDT
 decoding. Auto-detect of full arrays and structures requires the tag list, which
 ControlLogix/CompactLogix provide on connect.
 
+### Numeric data types
+
+Reads, writes, array writes and bit access work on BOOL, SINT, USINT, INT, UINT, DINT, UDINT,
+LINT, ULINT, REAL and LREAL, plus the bit-string types BYTE, WORD and LWORD. `st-ethernet-ip`
+only handles part of that list, so the rest is added by `src/st-type-patch.ts`.
+
+| Type | Value in `msg.payload` |
+|------|------------------------|
+| USINT, UINT, UDINT, BYTE, WORD | number |
+| LREAL | number (double) |
+| LINT, ULINT, LWORD | BigInt. A write also takes a number or digit text, which keeps values past 2^53 exact |
+
+Out of range values are refused before anything is sent. Bit access is not available on
+ULINT, LREAL and LWORD. A write of an LREAL, BYTE, WORD or LWORD array too big for one packet
+(roughly 60 LREAL or LWORD, 240 WORD elements) fails, because the library only fragments those
+writes for the types it knows.
+
+A **Micro800** reports its BYTE, WORD, DWORD and LWORD variables as USINT, UINT, UDINT and
+ULINT, so those four come back as plain unsigned numbers (LWORD as a BigInt).
+
+The library names two type codes differently from the CIP spec; the patch corrects them to
+BYTE (`0xD1`), WORD (`0xD2`), DWORD (`0xD3`) and LWORD (`0xD4`). A tag the controller reports
+as `0xD3` is read by the library as an array of 32 booleans, which is right for a Logix BOOL
+array and is not changed, so a raw DWORD is not a number.
+
+Hardware status:
+
+- **Tested on a Micro850:** USINT, UINT, UDINT, ULINT (including 2^64 - 1) and LREAL, as scalars,
+  with bit access and out of range refusal. UINT, UDINT and LREAL as arrays as well.
+- **Simulator and unit tests only (experimental):** the raw BYTE, WORD and LWORD codes
+  (`0xD1`, `0xD2`, `0xD4`), arrays of USINT, ULINT and the bit-string types, and fragmented
+  writes. No controller used so far reports them. Please report what you see on one.
+
 **Array lengths** are resolved in this order, and memoised until the connection is
 re-established, so a polled array costs one request per poll:
 
@@ -365,6 +398,7 @@ Tests cover:
 - CIP path building (8-bit/16-bit segments, attributeId edge cases)
 - **Forward_Open framing** — strict PowerFlex 525 acceptance (transport byte, Connection Point vs Instance segments, electronic key parsing)
 - **cip-read end-to-end** — the real node reads whole arrays, nested UDTs, arrays of UDTs, ranges, program-scoped tags and batches from the ControlLogix simulator, over fragmented responses
+- **numeric types** — buffer encoding and decoding for every unsigned, LREAL and bit-string type, plus the real cip-write node against the simulator: scalars, arrays, bit access and out of range refusal
 - **cip-write end-to-end** — the real node writes against the ControlLogix simulator: the Data Type check, bit writes including the sign bit, partial UDT writes, and text to STRING tags and STRING members (empty, non-ASCII, full length, too long)
 - **cip-io-scanner end-to-end** — the real node drives the PowerFlex 525 simulator over TCP ForwardOpen + cyclic UDP I/O, asserting the connection establishes, data flows both directions, and a refused connection surfaces its extended status
 

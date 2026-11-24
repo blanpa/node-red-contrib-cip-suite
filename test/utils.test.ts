@@ -375,6 +375,21 @@ describe("buildBitMasks", () => {
     expect(orMask[0]).toBe(0x00);
     expect(andMask[1]).toBe(0xff);
   });
+
+  it("throws when the bit index is past the value width", () => {
+    expect(() => buildBitMasks(2, 16, true)).toThrow(RangeError);
+    expect(() => buildBitMasks(2, 20, false)).toThrow(RangeError);
+  });
+
+  it("throws for a negative or non-integer bit index", () => {
+    expect(() => buildBitMasks(2, -1, true)).toThrow(RangeError);
+    expect(() => buildBitMasks(2, 1.5, true)).toThrow(RangeError);
+  });
+
+  it("still allows the highest valid bit index (boundary)", () => {
+    const { orMask } = buildBitMasks(2, 15, true);
+    expect(orMask[1]).toBe(0x80);
+  });
 });
 
 // ── cipStatusText / cipTypeName ──

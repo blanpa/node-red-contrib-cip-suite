@@ -13,6 +13,7 @@
  * @module cip-write
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./st-type-patch");
 const types_1 = require("./types");
 const utils_1 = require("./utils");
 const endpoint_dynamic_1 = require("./endpoint-dynamic");
@@ -37,14 +38,20 @@ function stringCapacity(template) {
     return typeof size === "number" && size > 0 ? size : null;
 }
 /** Types the library writes as a number, whatever the value is. */
-const NUMERIC_TYPES = ["SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "REAL", "LREAL"];
+const NUMERIC_TYPES = [
+    "SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "ULINT", "REAL", "LREAL",
+    "BYTE", "WORD", "LWORD",
+];
 /** Of those, the names read with "an" ("an INT") */
 const AN_TYPES = ["INT"];
 /**
  * Types whose arrays the library encodes in one write. For a BOOL array it sends the element
  * count but a single byte, so a BOOL range has to go out one element at a time.
  */
-const ARRAY_WRITE_TYPES = ["SINT", "USINT", "INT", "DINT", "REAL", "LINT"];
+const ARRAY_WRITE_TYPES = [
+    "SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "ULINT", "REAL", "LREAL",
+    "BYTE", "WORD", "LWORD",
+];
 module.exports = function (RED) {
     function CipWriteNode(config) {
         RED.nodes.createNode(this, config);
@@ -120,15 +127,20 @@ module.exports = function (RED) {
         /**
          * Determine the byte size of a CIP data type for bit mask operations.
          */
-        function getTypeByteSize(typeCode) {
-            const code = typeof typeCode === "object" && typeCode !== null ? typeCode.code : typeCode;
+        function getTypeByteSize(type) {
+            // st-ethernet-ip's tag.type is the type name ("UINT"); a numeric code or a {code}
+            // object is accepted too.
+            const raw = typeof type === "object" && type !== null ? type.code : type;
+            const code = typeof raw === "number" ? raw : types_1.CIPDataType[String(raw)];
             switch (code) {
                 case types_1.CIPDataType.BOOL:
                 case types_1.CIPDataType.SINT:
                 case types_1.CIPDataType.USINT:
+                case types_1.CIPDataType.BYTE:
                     return 1;
                 case types_1.CIPDataType.INT:
                 case types_1.CIPDataType.UINT:
+                case types_1.CIPDataType.WORD:
                     return 2;
                 case types_1.CIPDataType.DINT:
                 case types_1.CIPDataType.UDINT:
@@ -136,6 +148,7 @@ module.exports = function (RED) {
                 case types_1.CIPDataType.DWORD:
                     return 4;
                 case types_1.CIPDataType.LINT:
+                case types_1.CIPDataType.ULINT:
                 case types_1.CIPDataType.LREAL:
                 case types_1.CIPDataType.LWORD:
                     return 8;
@@ -156,6 +169,7 @@ module.exports = function (RED) {
                 case "SINT":
                     return { bits: 8, signed: true };
                 case "USINT":
+                case "BYTE":
                     return { bits: 8, signed: false };
                 case "INT":
                     return { bits: 16, signed: true };
@@ -165,7 +179,6 @@ module.exports = function (RED) {
                 case "DINT":
                     return { bits: 32, signed: true };
                 case "UDINT":
-                case "DWORD":
                     return { bits: 32, signed: false };
                 default:
                     throw new Error(`Bit access is not supported on ${typeName} tags`);

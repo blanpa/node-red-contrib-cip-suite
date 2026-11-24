@@ -12,6 +12,7 @@
  * @module cip-read
  */
 
+import "./st-type-patch";
 import { CIPDataType, MultiTagResult } from "./types";
 import {
   parseTagName,

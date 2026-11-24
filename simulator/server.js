@@ -546,6 +546,36 @@ function handleTemplateObject(service, instanceId, data) {
 }
 
 /**
+ * The unsigned, LREAL and bit-string types: how one element is stored as little-endian bytes.
+ * Values are numbers, except ULINT and LWORD, which are BigInt.
+ */
+const EXTENDED_CODECS = {
+  [CIP_TYPES.USINT]: {
+    read: (buf, at) => buf.readUInt8(at),
+    write: (buf, value, at) => buf.writeUInt8(Number(value), at),
+  },
+  [CIP_TYPES.UINT]: {
+    read: (buf, at) => buf.readUInt16LE(at),
+    write: (buf, value, at) => buf.writeUInt16LE(Number(value), at),
+  },
+  [CIP_TYPES.UDINT]: {
+    read: (buf, at) => buf.readUInt32LE(at),
+    write: (buf, value, at) => buf.writeUInt32LE(Number(value), at),
+  },
+  [CIP_TYPES.ULINT]: {
+    read: (buf, at) => buf.readBigUInt64LE(at),
+    write: (buf, value, at) => buf.writeBigUInt64LE(BigInt(value), at),
+  },
+  [CIP_TYPES.LREAL]: {
+    read: (buf, at) => buf.readDoubleLE(at),
+    write: (buf, value, at) => buf.writeDoubleLE(value, at),
+  },
+};
+EXTENDED_CODECS[CIP_TYPES.BYTE] = EXTENDED_CODECS[CIP_TYPES.USINT];
+EXTENDED_CODECS[CIP_TYPES.WORD] = EXTENDED_CODECS[CIP_TYPES.UINT];
+EXTENDED_CODECS[CIP_TYPES.LWORD] = EXTENDED_CODECS[CIP_TYPES.ULINT];
+
+/**
  * Raw little-endian bytes of a tag's value, so a read can slice any element
  * range out of it. UDT tags already store their bytes; scalar and array tags
  * keep JavaScript values, so those are encoded on demand.
@@ -579,7 +609,8 @@ function tagDataBuffer(tag) {
         buf.writeFloatLE(value, i * 4);
         break;
       default:
-        buf.writeInt32LE(0, i * 4);
+        if (EXTENDED_CODECS[tag.type]) EXTENDED_CODECS[tag.type].write(buf, value, i * size);
+        else buf.writeInt32LE(0, i * 4);
     }
   });
   return buf;
@@ -902,7 +933,7 @@ function handleWriteTag(service, tagName, dataBuf) {
           item = dataBuf.readFloatLE(at);
           break;
         default:
-          item = 0;
+          item = EXTENDED_CODECS[type] ? EXTENDED_CODECS[type].read(dataBuf, at) : 0;
       }
       elements.tag.value[start + i] = item;
     }
@@ -929,7 +960,7 @@ function handleWriteTag(service, tagName, dataBuf) {
       value = dataBuf.readFloatLE(4);
       break;
     default:
-      value = 0;
+      value = EXTENDED_CODECS[type] ? EXTENDED_CODECS[type].read(dataBuf, 4) : 0;
   }
 
   const tag = tags.get(tagName);

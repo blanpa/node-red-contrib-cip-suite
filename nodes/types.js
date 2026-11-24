@@ -17,13 +17,15 @@ var CIPDataType;
     CIPDataType[CIPDataType["USINT"] = 198] = "USINT";
     CIPDataType[CIPDataType["UINT"] = 199] = "UINT";
     CIPDataType[CIPDataType["UDINT"] = 200] = "UDINT";
+    CIPDataType[CIPDataType["ULINT"] = 201] = "ULINT";
     CIPDataType[CIPDataType["LREAL"] = 203] = "LREAL";
     CIPDataType[CIPDataType["REAL"] = 202] = "REAL";
     CIPDataType[CIPDataType["STRING"] = 208] = "STRING";
     CIPDataType[CIPDataType["SHORT_STRING"] = 218] = "SHORT_STRING";
-    CIPDataType[CIPDataType["WORD"] = 209] = "WORD";
-    CIPDataType[CIPDataType["DWORD"] = 210] = "DWORD";
-    CIPDataType[CIPDataType["LWORD"] = 211] = "LWORD";
+    CIPDataType[CIPDataType["BYTE"] = 209] = "BYTE";
+    CIPDataType[CIPDataType["WORD"] = 210] = "WORD";
+    CIPDataType[CIPDataType["DWORD"] = 211] = "DWORD";
+    CIPDataType[CIPDataType["LWORD"] = 212] = "LWORD";
     CIPDataType[CIPDataType["STRUCT"] = 672] = "STRUCT";
 })(CIPDataType || (exports.CIPDataType = CIPDataType = {}));
 exports.CIP_TYPE_NAMES = {
@@ -35,10 +37,12 @@ exports.CIP_TYPE_NAMES = {
     [CIPDataType.USINT]: "USINT",
     [CIPDataType.UINT]: "UINT",
     [CIPDataType.UDINT]: "UDINT",
+    [CIPDataType.ULINT]: "ULINT",
     [CIPDataType.REAL]: "REAL",
     [CIPDataType.LREAL]: "LREAL",
     [CIPDataType.STRING]: "STRING",
     [CIPDataType.SHORT_STRING]: "SHORT_STRING",
+    [CIPDataType.BYTE]: "BYTE",
     [CIPDataType.WORD]: "WORD",
     [CIPDataType.DWORD]: "DWORD",
     [CIPDataType.LWORD]: "LWORD",

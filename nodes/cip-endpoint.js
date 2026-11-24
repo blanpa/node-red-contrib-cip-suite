@@ -12,6 +12,7 @@
  * @module cip-endpoint
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./st-type-patch");
 const types_1 = require("./types");
 const utils_1 = require("./utils");
 const eip_port_1 = require("./eip-port");

@@ -15,7 +15,15 @@ const ATOMIC_SIZE = {
   0xc3: 2, // INT
   0xc4: 4, // DINT
   0xc5: 8, // LINT
+  0xc6: 1, // USINT
+  0xc7: 2, // UINT
+  0xc8: 4, // UDINT
+  0xc9: 8, // ULINT
   0xca: 4, // REAL
+  0xcb: 8, // LREAL
+  0xd1: 1, // BYTE
+  0xd2: 2, // WORD
+  0xd4: 8, // LWORD
 };
 
 const STRUCT_TYPE = 0x02a0;

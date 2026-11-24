@@ -22,8 +22,16 @@ const CIP_TYPES = {
   INT: 0xc3,
   DINT: 0xc4,
   LINT: 0xc5,
+  USINT: 0xc6,
+  UINT: 0xc7,
+  UDINT: 0xc8,
+  ULINT: 0xc9,
   REAL: 0xca,
-  STRING: 0xd0
+  LREAL: 0xcb,
+  STRING: 0xd0,
+  BYTE: 0xd1,
+  WORD: 0xd2,
+  LWORD: 0xd4
 };
 
 function tag(name, type, typeName, value, extra) {
@@ -123,6 +131,21 @@ function createControlLogixTags() {
   // Extended types
   tags.set("MyLint", tag("MyLint", CIP_TYPES.LINT, "LINT", 123456789));
   tags.set("StatusWord", tag("StatusWord", CIP_TYPES.DINT, "DINT", 0x0000ff0a));
+
+  // Unsigned, LREAL and bit-string types, which a Logix does not have but a Micro800 or a
+  // CIP device can report (#42).
+  tags.set("MyUsint", tag("MyUsint", CIP_TYPES.USINT, "USINT", 200));
+  tags.set("MyUint", tag("MyUint", CIP_TYPES.UINT, "UINT", 65000));
+  tags.set("MyUdint", tag("MyUdint", CIP_TYPES.UDINT, "UDINT", 4000000000));
+  tags.set("MyUlint", tag("MyUlint", CIP_TYPES.ULINT, "ULINT", 18446744073709551615n));
+  tags.set("MyLreal", tag("MyLreal", CIP_TYPES.LREAL, "LREAL", 2.718281828459045));
+  tags.set("MyByte", tag("MyByte", CIP_TYPES.BYTE, "BYTE", 0xa5));
+  tags.set("MyWord", tag("MyWord", CIP_TYPES.WORD, "WORD", 0xbeef));
+  tags.set("MyLword", tag("MyLword", CIP_TYPES.LWORD, "LWORD", 0xdeadbeefcafen));
+  tags.set("MyUintArray", arrayTag("MyUintArray", CIP_TYPES.UINT, "UINT", [1, 2, 65535, 4]));
+  tags.set("MyUdintArray", arrayTag("MyUdintArray", CIP_TYPES.UDINT, "UDINT", [1, 2, 4294967295, 4]));
+  tags.set("MyUlintArray", arrayTag("MyUlintArray", CIP_TYPES.ULINT, "ULINT", [1n, 2n, 18446744073709551615n, 4n]));
+  tags.set("MyLrealArray", arrayTag("MyLrealArray", CIP_TYPES.LREAL, "LREAL", [1.5, -2.25, 3.125e50, 4]));
 
   // PCCC register files
   tags.set("_PCCC_N7", pcccTag("_PCCC_N7", "PCCC_INT", "Integer",
