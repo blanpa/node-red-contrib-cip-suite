@@ -314,7 +314,7 @@ Each profile provides a realistic tag set:
 | ForwardOpen/Close | 0x54/0x4E | Connected messaging |
 | ReadTag | 0x4C | Read tag values — honours the requested element count, answers `0xFF`/`0x2105` past the end of a tag |
 | ReadTagFragmented | 0x52 | Continues a read too large for one packet (structs, long arrays) |
-| WriteTag | 0x4D | Write tag values |
+| WriteTag | 0x4D | Write tag values — answers `0xFF`/`0x2105` for more elements than the tag has left |
 | GetInstanceAttributeList | 0x55 | Tag browsing — type word carries the array and structure flags |
 | GetAttributeAll | 0x01 | Controller identity |
 | GetAttributeSingle | 0x0E | Single attribute read, incl. Symbol Object array dimensions (attr 8) |

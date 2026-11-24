@@ -180,6 +180,17 @@ export const CIP_STATUS: Record<number, string> = {
   0x27: "Unexpected attribute in list",
   0x28: "Invalid member ID",
   0x29: "Member not settable",
+  0xff: "General error",
+};
+
+/**
+ * What the extended status says when the general status is 0xFF. A Logix or Micro800 answers
+ * a tag read or write that way, and the general status on its own says nothing.
+ */
+export const CIP_GENERAL_ERROR_EXTENDED: Record<number, string> = {
+  0x2104: "Offset is past the end of the tag",
+  0x2105: "Access goes past the end of the tag",
+  0x2107: "Data type does not match the tag",
 };
 
 /**

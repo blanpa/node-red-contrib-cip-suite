@@ -224,6 +224,29 @@ describe("describeCipError", () => {
     );
   });
 
+  it("names the reason behind a general error (0xFF) from its extended status", () => {
+    expect(describeCipError({ generalStatusCode: 0xff, extendedStatus: [0x2105] })).toBe(
+      "Access goes past the end of the tag (CIP 0xff, extended 0x2105)"
+    );
+    expect(describeCipError({ generalStatusCode: 0xff, extendedStatus: [0x2107] })).toBe(
+      "Data type does not match the tag (CIP 0xff, extended 0x2107)"
+    );
+    expect(describeCipError({ generalStatusCode: 0xff, extendedStatus: [0x2104] })).toBe(
+      "Offset is past the end of the tag (CIP 0xff, extended 0x2104)"
+    );
+  });
+
+  it("falls back to the general status for an extended status it does not know", () => {
+    expect(describeCipError({ generalStatusCode: 0xff, extendedStatus: [0x1234] })).toBe(
+      "General error (CIP 0xff, extended 0x1234)"
+    );
+    expect(describeCipError({ generalStatusCode: 0xff, extendedStatus: [] })).toBe("General error (CIP 0xff)");
+    // The same extended code under another general status means something else.
+    expect(describeCipError({ generalStatusCode: 0x01, extendedStatus: [0x2105] })).toBe(
+      "Connection failure (CIP 0x01, extended 0x2105)"
+    );
+  });
+
   it("wraps a bare rejection into a real Error", () => {
     const err = toCipError({ generalStatusCode: 5, extendedStatus: [] }, "Read failed");
     expect(err).toBeInstanceOf(Error);

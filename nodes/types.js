@@ -4,7 +4,7 @@
  * Includes Node-RED runtime types and CIP/EtherNet/IP types.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IOConnectionState = exports.FileTransferState = exports.EnergyMode = exports.AxisState = exports.MotionCommand = exports.PCCCFileType = exports.CIP_CONNECTION_EXT_STATUS = exports.CIP_STATUS = exports.CIPClass = exports.CIPService = exports.CIP_TYPE_NAMES = exports.CIPDataType = void 0;
+exports.IOConnectionState = exports.FileTransferState = exports.EnergyMode = exports.AxisState = exports.MotionCommand = exports.PCCCFileType = exports.CIP_CONNECTION_EXT_STATUS = exports.CIP_GENERAL_ERROR_EXTENDED = exports.CIP_STATUS = exports.CIPClass = exports.CIPService = exports.CIP_TYPE_NAMES = exports.CIPDataType = void 0;
 exports.connectionErrorText = connectionErrorText;
 // ── CIP Data Types ──
 var CIPDataType;
@@ -141,6 +141,16 @@ exports.CIP_STATUS = {
     0x27: "Unexpected attribute in list",
     0x28: "Invalid member ID",
     0x29: "Member not settable",
+    0xff: "General error",
+};
+/**
+ * What the extended status says when the general status is 0xFF. A Logix or Micro800 answers
+ * a tag read or write that way, and the general status on its own says nothing.
+ */
+exports.CIP_GENERAL_ERROR_EXTENDED = {
+    0x2104: "Offset is past the end of the tag",
+    0x2105: "Access goes past the end of the tag",
+    0x2107: "Data type does not match the tag",
 };
 /**
  * Connection Manager extended status codes, returned alongside general status

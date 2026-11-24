@@ -426,6 +426,7 @@ describe("cip-write custom-length strings and members", () => {
     const { write } = makeWriteNode({ tagName: "MyIntArray", dataType: "auto" });
     const msg = await write({ payload: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] });
     expect(msg.payload.success).toBe(false);
+    expect(msg.payload.error).toBe("Access goes past the end of the tag (CIP 0xff, extended 0x2105)");
     expect(await readValue("MyIntArray")).toEqual(before);
   });
 
@@ -434,6 +435,10 @@ describe("cip-write custom-length strings and members", () => {
     const { write } = makeWriteNode({ tagName: "MyIntArray[8]", dataType: "auto" });
     const msg = await write({ payload: [1, 2, 3, 4, 5] });
     expect(msg.payload.success).toBe(false);
+    // Readable, with the codes kept for a flow that branches on them (#43).
+    expect(msg.payload.error).toBe("Access goes past the end of the tag (CIP 0xff, extended 0x2105)");
+    expect(msg.payload.generalStatusCode).toBe(0xff);
+    expect(msg.payload.extendedStatus).toEqual([0x2105]);
     expect(await readValue("MyIntArray")).toEqual(before);
   });
 

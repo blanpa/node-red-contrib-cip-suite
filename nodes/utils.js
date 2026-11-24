@@ -292,7 +292,11 @@ function describeCipError(err) {
         const ext = Array.isArray(err.extendedStatus) && err.extendedStatus.length > 0
             ? `, extended ${err.extendedStatus.map((e) => hex(e, 4)).join(", ")}`
             : "";
-        return `${cipStatusText(err.generalStatusCode)} (CIP ${hex(err.generalStatusCode, 2)}${ext})`;
+        // 0xFF only says "general error": the reason is in the extended status (#43).
+        const reason = err.generalStatusCode === 0xff && Array.isArray(err.extendedStatus)
+            ? types_1.CIP_GENERAL_ERROR_EXTENDED[err.extendedStatus[0]]
+            : undefined;
+        return `${reason || cipStatusText(err.generalStatusCode)} (CIP ${hex(err.generalStatusCode, 2)}${ext})`;
     }
     try {
         const json = JSON.stringify(err);
