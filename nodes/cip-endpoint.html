@@ -163,7 +163,7 @@
       };
 
       /** Drop a filterable list of tags under `$anchor`. Choosing one calls `onPick(name)`. */
-      var showPop = function ($anchor, tags, onPick) {
+      var showPop = function ($anchor, tags, onPick, current) {
         closePop();
         // Inside the tray, so it goes when the dialog does and is not clipped by the form.
         var $host = $anchor.closest(".red-ui-tray");
@@ -180,19 +180,50 @@
 
         // What a tag is matched against: its name and its type, in full and with the
         // punctuation taken out, so "em di 01" finds _IO_EM_DI_01 and "emdi01" does too.
-        var squash = function (text) {
-          return text.toLowerCase().replace(/[^a-z0-9]/g, "");
+        // A space, underscore, dot or dash in the filter stands for one or more of those in
+        // the name, so "em di 01" finds _IO_EM_DI_01 and "st a" finds st_art but not _start.
+        // Anything else must match as typed, anywhere in the name. A word that starts the tag's
+        // type ("bool", "dint", "string" for SHORT_STRING) filters on the type instead.
+        var SEP = /[\s_.\-]+/;
+        var namePattern = function (words) {
+          if (!words.length) {
+            return null;
+          }
+          return new RegExp(
+            words
+              .join(" ")
+              .split(SEP)
+              .map(function (part) {
+                return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              })
+              .join("[^a-z0-9]+")
+          );
+        };
+        var isTypeWord = function (type, word) {
+          return word.length > 1 && type.split("_").concat(type).some(function (token) {
+            return token.indexOf(word) === 0;
+          });
         };
         var haystacks = tags.map(function (t) {
-          var text = (t.name + " " + (typeof t.type === "string" ? t.type : "")).toLowerCase();
-          return { text: text, squashed: squash(text) };
+          return {
+            name: String(t.name).toLowerCase(),
+            type: typeof t.type === "string" ? t.type.toLowerCase() : ""
+          };
         });
         var matches = function (words, index) {
           var h = haystacks[index];
-          return words.every(function (word) {
-            var squashed = squash(word);
-            return h.text.indexOf(word) !== -1 || (squashed !== "" && h.squashed.indexOf(squashed) !== -1);
+          var whole = namePattern(words);
+          if (whole.test(h.name)) {
+            return true;
+          }
+          var rest = words.filter(function (word) {
+            return !isTypeWord(h.type, word);
           });
+          if (rest.length === words.length) {
+            return false;
+          }
+          var pattern = namePattern(rest);
+          return !pattern || pattern.test(h.name);
         };
 
         var setActive = function (index) {
@@ -211,12 +242,29 @@
             onPick(name);
           }
         };
+        // The first list shows the field's current tag, if the controller has it, in view and
+        // selected. Later renders follow the filter.
+        var showCurrent = typeof current === "string" && current !== "";
         var render = function () {
           var words = $.trim($filter.val()).toLowerCase().split(/[\s,]+/).filter(Boolean);
           var found = tags.filter(function (t, index) {
             return !words.length || matches(words, index);
           });
-          rows = found.slice(0, MAX_SHOWN);
+          var from = 0;
+          var currentAt = -1;
+          if (showCurrent && !words.length) {
+            found.some(function (t, index) {
+              if (t.name === current) {
+                currentAt = index;
+                return true;
+              }
+              return false;
+            });
+            if (currentAt >= MAX_SHOWN) {
+              from = Math.max(0, Math.min(currentAt - 50, found.length - MAX_SHOWN));
+            }
+          }
+          rows = found.slice(from, from + MAX_SHOWN);
           $list.empty();
           rows.forEach(function (t) {
             // The type helps you pick a tag and is never part of the value. A controller
@@ -239,7 +287,17 @@
                   : ""
             )
             .toggle(!rows.length || found.length > MAX_SHOWN);
-          setActive(0);
+          if (currentAt >= 0) {
+            setActive(currentAt - from);
+            var li = $list.children(".active")[0];
+            if (li) {
+              var offset = li.getBoundingClientRect().top - $list[0].getBoundingClientRect().top;
+              $list[0].scrollTop += offset - ($list[0].clientHeight - li.offsetHeight) / 2;
+            }
+          } else {
+            setActive(0);
+          }
+          showCurrent = false;
         };
 
         $list.on("mousedown", "li", function (e) {
@@ -248,11 +306,15 @@
         });
         $filter.on("input", render);
         $filter.on("keydown", function (e) {
+          // These keys are handled here. Left to bubble, the editor's key handler runs after
+          // Enter has removed this box and fails on the detached target.
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
+            e.stopPropagation();
             setActive(active + (e.key === "ArrowDown" ? 1 : -1));
           } else if (e.key === "Enter") {
             e.preventDefault();
+            e.stopPropagation();
             if (active >= 0) {
               choose(rows[active].name);
             }
@@ -289,7 +351,7 @@
       };
 
       /** Load the controller's tags. `onPick(name)` receives the chosen tag. */
-      var load = function ($button, onPick) {
+      var load = function ($button, onPick, current) {
         var endpointId = $("#node-input-endpoint").val();
         if (!endpointId || endpointId === "_ADD_") {
           RED.notify("Select and deploy an endpoint first.", "warning");
@@ -302,7 +364,7 @@
         $.getJSON("cip-endpoint/" + endpointId + "/browse")
           .done(function (tags) {
             if (!inline) {
-              showPop($button, tags, onPick);
+              showPop($button, tags, onPick, current);
               return;
             }
             $sel.empty();
@@ -333,7 +395,13 @@
 
       // cip-browse lists tags as its own output and has no field to fill, so it picks nothing.
       $btn.on("click", function () {
-        load($btn, $name.length ? fillName : null);
+        var current = "";
+        try {
+          current = $name.typedInput("type") === "str" ? $name.typedInput("value") : "";
+        } catch (e) {
+          current = $name.val() || "";
+        }
+        load($btn, $name.length ? fillName : null, current);
       });
 
       var apply = function (collapse) {

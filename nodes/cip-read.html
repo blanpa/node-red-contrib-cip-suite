@@ -88,7 +88,7 @@
       }
 
       $dataType.typedInput({
-        types: [{ value: "dt", label: "Data type", options: dataTypes }, "msg", "env"],
+        types: [{ value: "dt", label: "Data type", icon: "fa fa-cube", options: dataTypes }, "msg", "env"],
         typeField: "#node-input-dataTypeType",
         default: "dt"
       });
@@ -194,11 +194,15 @@
               RED.notify("Tag browse is unavailable: the cip-endpoint editor script did not load.", "warning");
               return;
             }
-            browser.browse(rowBrowse, function (name) {
-              rowTag.typedInput("type", "str");
-              rowTag.typedInput("value", name);
-              window.cipSuiteEditor.focusEnd(rowTag);
-            });
+            browser.browse(
+              rowBrowse,
+              function (name) {
+                rowTag.typedInput("type", "str");
+                rowTag.typedInput("value", name);
+                window.cipSuiteEditor.focusEnd(rowTag);
+              },
+              rowTag.typedInput("type") === "str" ? rowTag.typedInput("value") : ""
+            );
           });
 
           function showSize() {
@@ -222,6 +226,39 @@
       });
       $list.editableList("addItems", node.tagList || []);
       loading = false;
+
+      // The list grows with its rows up to the free space in the dialog, and never below
+      // 150px. Dragging the grip at its bottom right sets a height of your own, which then
+      // stays.
+      var $box = $list.parent();
+      var userHeight = null;
+      var setHeight = 0;
+      var fitList = function () {
+        if (!$box.is(":visible")) {
+          return;
+        }
+        var wanted = userHeight;
+        if (wanted === null) {
+          var free = node._freeHeight || 400;
+          wanted = Math.max(150, Math.min($list.outerHeight() + 8, free));
+        }
+        setHeight = Math.round(wanted);
+        $box.css("height", setHeight);
+      };
+      $box.on("mouseup", function () {
+        var now = $box.outerHeight();
+        if (Math.abs(now - setHeight) > 2) {
+          userHeight = now;
+          setHeight = now;
+        }
+      });
+      node._fitList = fitList;
+      var fitSoon = function () {
+        setTimeout(fitList, 0);
+      };
+      $list.on("click keyup", fitSoon);
+      $("#dialog-form .cip-read-multiple .red-ui-editableList-addButton").on("click", fitSoon);
+      fitSoon();
 
       // The browser handles an accesskey itself: Alt+T in Chrome and Edge, Alt+Shift+T in
       // Firefox, Ctrl+Option+T on a Mac. Not A: Node-RED binds a chord that starts with Alt+A
@@ -266,6 +303,29 @@
         $input.on("typedinputtypechange change", refresh);
       });
       refresh();
+    },
+    oneditresize: function (size) {
+      // What the dialog has left once every other row has taken its share.
+      var used = 0;
+      $("#dialog-form")
+        .children("div")
+        .each(function () {
+          var $row = $(this);
+          if ($row.is(":visible") && !$row.hasClass("cip-read-multiple")) {
+            used += $row.outerHeight(true);
+          }
+        });
+      var multiple = $("#dialog-form .cip-read-multiple");
+      var other = 0;
+      multiple.children().each(function () {
+        if (!$(this).find("#node-input-tagList-container").length && !$(this).is(".red-ui-editableList")) {
+          other += $(this).outerHeight(true);
+        }
+      });
+      this._freeHeight = Math.max(150, size.height - used - other - 60);
+      if (this._fitList) {
+        this._fitList();
+      }
     },
     oneditsave: function () {
       var node = this;
@@ -384,6 +444,12 @@
   .cip-read-field .red-ui-typedInput-container,
   #node-input-tagList-container .red-ui-typedInput-container {
     width: 100% !important;
+  }
+  /* Grip at the bottom right to size the list. */
+  .cip-read-multiple .red-ui-editableList-container {
+    resize: vertical;
+    overflow-y: auto;
+    min-height: 100px;
   }
   /* With a Browse button the typed input and the button share the 70%. */
   .cip-read-field-browse {
