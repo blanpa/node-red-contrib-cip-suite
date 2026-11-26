@@ -507,10 +507,111 @@ export function parseTagList(input: string): string[] {
       // fall through to comma split
     }
   }
-  return trimmed
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return splitTopLevel(trimmed).filter(Boolean);
+}
+
+/**
+ * Split on top level commas and trim each part, keeping empty ones. A comma inside
+ * [...] belongs to the tag name ("Arr[1,2]"), so it does not separate tags.
+ */
+function splitTopLevel(input: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of input) {
+    if (ch === "[") depth++;
+    else if (ch === "]" && depth > 0) depth--;
+    if (ch === "," && depth === 0) {
+      parts.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current.trim());
+  return parts;
+}
+
+/** One requested tag in a batch read. `error` is set when the entry could not be understood. */
+export interface BatchEntry {
+  name: string;
+  dataType?: string;
+  arraySize?: number;
+  error?: string;
+}
+
+/**
+ * Turn a batch `tags` value into entries. Accepts a comma separated string, or an array
+ * of tag names and `{ name | tagName, dataType, arraySize }` objects. An entry that cannot
+ * be understood is returned with an `error` and a name of `tags[i]`, so the caller can
+ * report every bad entry by position and refuse the whole batch.
+ */
+export function parseBatchTags(input: unknown): BatchEntry[] {
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (trimmed === "") return [];
+    if (trimmed.startsWith("[")) {
+      try {
+        const arr = JSON.parse(trimmed);
+        if (Array.isArray(arr)) return parseBatchTags(arr);
+      } catch {
+        // not JSON, so it is a name such as "Arr[1,2]"
+      }
+    }
+    // Unlike parseTagList, an empty segment is an error: the results line up with the
+    // entries as written, so "A,,C" must not quietly turn C into the second result.
+    return splitTopLevel(trimmed).map((name, index) =>
+      name
+        ? { name }
+        : { name: `tags[${index}]`, error: `Invalid tag entry at tags[${index}]: the tag name is empty` }
+    );
+  }
+  if (!Array.isArray(input)) return [];
+
+  const entries: BatchEntry[] = [];
+  input.forEach((item: any, index: number) => {
+    if (typeof item === "string") {
+      const name = item.trim();
+      // A blank entry is an error, not skipped, so an index in a message never shifts.
+      entries.push(
+        name
+          ? { name }
+          : { name: `tags[${index}]`, error: `Invalid tag entry at tags[${index}]: the tag name is empty` }
+      );
+      return;
+    }
+    if (item && typeof item === "object") {
+      const rawName = item.name ?? item.tagName;
+      const name = typeof rawName === "string" ? rawName.trim() : "";
+      if (!name) {
+        entries.push({
+          name: `tags[${index}]`,
+          error: `Invalid tag entry at tags[${index}]: an object needs a "name" or "tagName" string`,
+        });
+        return;
+      }
+      const entry: BatchEntry = { name };
+      if (item.dataType != null) entry.dataType = String(item.dataType);
+      if (item.arraySize != null) {
+        const size = Number(item.arraySize);
+        if (!Number.isInteger(size) || size < 1) {
+          entries.push({
+            name,
+            error: `Invalid arraySize ${JSON.stringify(item.arraySize)} for "${name}": expected a positive whole number`,
+          });
+          return;
+        }
+        entry.arraySize = size;
+      }
+      entries.push(entry);
+      return;
+    }
+    entries.push({
+      name: `tags[${index}]`,
+      error: `Invalid tag entry at tags[${index}]: expected a tag name or an object, got ${item === null ? "null" : typeof item}`,
+    });
+  });
+  return entries;
 }
 
 /**

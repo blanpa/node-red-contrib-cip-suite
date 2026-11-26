@@ -23,6 +23,7 @@ exports.cipErrorFields = cipErrorFields;
 exports.guardReplyHandlers = guardReplyHandlers;
 exports.debounce = debounce;
 exports.parseTagList = parseTagList;
+exports.parseBatchTags = parseBatchTags;
 exports.withTiming = withTiming;
 const types_1 = require("./types");
 function parseTagName(tagName) {
@@ -439,10 +440,81 @@ function parseTagList(input) {
             // fall through to comma split
         }
     }
-    return trimmed
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+    // A comma inside [...] belongs to the tag name ("Arr[1,2]"), so only top level
+    // commas separate tags.
+    const parts = [];
+    let depth = 0;
+    let current = "";
+    for (const ch of trimmed) {
+        if (ch === "[")
+            depth++;
+        else if (ch === "]" && depth > 0)
+            depth--;
+        if (ch === "," && depth === 0) {
+            parts.push(current);
+            current = "";
+        }
+        else {
+            current += ch;
+        }
+    }
+    parts.push(current);
+    return parts.map((s) => s.trim()).filter(Boolean);
+}
+/**
+ * Turn a batch `tags` value into entries. Accepts a comma separated string, or an array
+ * of tag names and `{ name | tagName, dataType, arraySize }` objects. An entry that cannot
+ * be understood is returned with an `error` so the rest of the batch still runs.
+ */
+function parseBatchTags(input) {
+    if (typeof input === "string") {
+        return parseTagList(input).map((name) => ({ name }));
+    }
+    if (!Array.isArray(input))
+        return [];
+    const entries = [];
+    input.forEach((item, index) => {
+        if (typeof item === "string") {
+            const name = item.trim();
+            // Every array slot gets a result, so payload[i] always answers tags[i].
+            entries.push(name
+                ? { name }
+                : { name: `tags[${index}]`, error: `Invalid tag entry at tags[${index}]: the tag name is empty` });
+            return;
+        }
+        if (item && typeof item === "object") {
+            const rawName = item.name ?? item.tagName;
+            const name = typeof rawName === "string" ? rawName.trim() : "";
+            if (!name) {
+                entries.push({
+                    name: `tags[${index}]`,
+                    error: `Invalid tag entry at tags[${index}]: an object needs a "name" or "tagName" string`,
+                });
+                return;
+            }
+            const entry = { name };
+            if (item.dataType != null)
+                entry.dataType = String(item.dataType);
+            if (item.arraySize != null) {
+                const size = Number(item.arraySize);
+                if (!Number.isInteger(size) || size < 1) {
+                    entries.push({
+                        name,
+                        error: `Invalid arraySize ${JSON.stringify(item.arraySize)} for "${name}": expected a positive whole number`,
+                    });
+                    return;
+                }
+                entry.arraySize = size;
+            }
+            entries.push(entry);
+            return;
+        }
+        entries.push({
+            name: `tags[${index}]`,
+            error: `Invalid tag entry at tags[${index}]: expected a tag name or an object, got ${item === null ? "null" : typeof item}`,
+        });
+    });
+    return entries;
 }
 /**
  * Measure execution time of an async function.

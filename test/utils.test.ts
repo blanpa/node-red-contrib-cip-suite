@@ -9,6 +9,7 @@ import {
   cipStatusText,
   cipTypeName,
   parseTagList,
+  parseBatchTags,
   withTiming,
   debounce,
   mergeMembers,
@@ -447,6 +448,91 @@ describe("parseTagList", () => {
 
   it("trims whitespace", () => {
     expect(parseTagList("  Tag1 , Tag2  ")).toEqual(["Tag1", "Tag2"]);
+  });
+
+  it("keeps a comma inside brackets in the tag name", () => {
+    expect(parseTagList("Arr[1,2],MyInt")).toEqual(["Arr[1,2]", "MyInt"]);
+  });
+
+  it("splits on top level commas only", () => {
+    expect(parseTagList("A[0,1] , B , C[2,3,4]")).toEqual(["A[0,1]", "B", "C[2,3,4]"]);
+  });
+
+  it("does not hang on an unbalanced bracket", () => {
+    expect(parseTagList("A],B")).toEqual(["A]", "B"]);
+    expect(parseTagList("A[1,2")).toEqual(["A[1,2"]);
+  });
+});
+
+// ── parseBatchTags ──
+
+describe("parseBatchTags", () => {
+  it("parses a comma separated string through parseTagList", () => {
+    expect(parseBatchTags("Arr[1,2], MyInt")).toEqual([{ name: "Arr[1,2]" }, { name: "MyInt" }]);
+  });
+
+  it("accepts names, name objects and tagName objects", () => {
+    expect(parseBatchTags([" A ", { name: "B", value: 1 }, { tagName: "C" }])).toEqual([
+      { name: "A" },
+      { name: "B" },
+      { name: "C" },
+    ]);
+  });
+
+  it("carries dataType and arraySize per entry", () => {
+    expect(parseBatchTags([{ name: "A", dataType: "ARRAY", arraySize: "5" }])).toEqual([
+      { name: "A", dataType: "ARRAY", arraySize: 5 },
+    ]);
+  });
+
+  it("flags an entry that has no usable name", () => {
+    const [entry] = parseBatchTags([{ value: 1 }]);
+    expect(entry.name).toBe("tags[0]");
+    expect(entry.error).toMatch(/needs a "name" or "tagName"/);
+  });
+
+  it("flags a bad arraySize against the tag", () => {
+    const [entry] = parseBatchTags([{ name: "A", arraySize: 1.5 }]);
+    expect(entry.name).toBe("A");
+    expect(entry.error).toMatch(/Invalid arraySize 1.5 for "A"/);
+  });
+
+  it("flags entries that are neither a string nor an object", () => {
+    const entries = parseBatchTags([1, null]);
+    expect(entries[0].error).toMatch(/got number/);
+    expect(entries[1].error).toMatch(/got null/);
+  });
+
+  it("flags a blank array entry as invalid and names its position", () => {
+    const entries = parseBatchTags(["A", "", "C"]);
+    expect(entries.map((e) => e.name)).toEqual(["A", "tags[1]", "C"]);
+    expect(entries[1].error).toMatch(/tags\[1\].*empty/);
+  });
+
+  it("flags an empty segment of a comma separated string and names its position", () => {
+    const entries = parseBatchTags("A,,C");
+    expect(entries.map((e) => e.name)).toEqual(["A", "tags[1]", "C"]);
+    expect(entries[1].error).toMatch(/tags\[1\].*empty/);
+  });
+
+  it("flags a trailing comma", () => {
+    const entries = parseBatchTags("A,B,");
+    expect(entries.map((e) => e.name)).toEqual(["A", "B", "tags[2]"]);
+    expect(entries[2].error).toMatch(/empty/);
+  });
+
+  it("treats a JSON array string like an array", () => {
+    expect(parseBatchTags('["A", "B"]')).toEqual([{ name: "A" }, { name: "B" }]);
+    expect(parseBatchTags('["A", 1]')[1].error).toMatch(/got number/);
+  });
+
+  it("returns nothing for a blank string", () => {
+    expect(parseBatchTags("   ")).toEqual([]);
+  });
+
+  it("returns nothing for other input", () => {
+    expect(parseBatchTags(undefined)).toEqual([]);
+    expect(parseBatchTags(5)).toEqual([]);
   });
 });
 

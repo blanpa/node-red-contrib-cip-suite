@@ -11,7 +11,16 @@ jest.mock("st-ethernet-ip", () => {
       this.program = program;
     }
   }
-  return { Tag: FakeTag, TagGroup: class {}, Structure: class {} };
+  class FakeTagGroup {
+    tags: any[] = [];
+    add(tag: any) {
+      this.tags.push(tag);
+    }
+    get length() {
+      return this.tags.length;
+    }
+  }
+  return { Tag: FakeTag, TagGroup: FakeTagGroup, Structure: class {} };
 });
 
 /** Records the name and program every tag is built with. */
@@ -85,6 +94,10 @@ function makeReadNode(controller: any, config: Record<string, any> = {}) {
 const read = (node: any, msg: any) =>
   new Promise<void>((resolve) => node.emit("input", msg, node.send, () => resolve()));
 
+/** Send a message and resolve with whatever the node passed to done(). */
+const readError = (node: any, msg: any) =>
+  new Promise<Error>((resolve) => node.emit("input", msg, node.send, (err: Error) => resolve(err)));
+
 beforeAll(() => loadModule());
 
 describe("tag name construction", () => {
@@ -115,6 +128,119 @@ describe("tag name construction", () => {
     await read(node, { tagName: "Program:MainProgram.Speeds[3]" });
 
     expect(controller.built).toEqual([{ name: "Speeds[3]", program: "MainProgram" }]);
+  });
+});
+
+describe("batch reads from msg.tags", () => {
+  const payloadOf = (node: any) => node.send.mock.calls[0][0].payload;
+
+  it("reads a comma separated string", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { tagName: "Configured" });
+
+    await read(node, { tags: "Alpha, Beta" });
+
+    expect(controller.built.map((b) => b.name)).toEqual(["Alpha", "Beta"]);
+    expect(payloadOf(node).map((r: any) => r.tagName)).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("accepts name and tagName objects, as cip-subscribe and cip-read emit", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller);
+
+    await read(node, {
+      tags: [
+        { name: "Alpha", value: 1, type: "DINT", changed: true },
+        { tagName: "Beta", value: 2, type: "DINT" },
+      ],
+    });
+
+    expect(payloadOf(node).map((r: any) => r.tagName)).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("fails before reading anything when an entry is malformed", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller);
+
+    const err = await readError(node, { tags: ["Alpha", 42, { value: 1 }, null, "", "Beta"] });
+
+    expect(node.send).not.toHaveBeenCalled();
+    expect(controller.built).toEqual([]);
+    // Every bad entry is named, with its position
+    expect(err.message).toMatch(/nothing was read/);
+    expect(err.message).toMatch(/tags\[1\].*got number/);
+    expect(err.message).toMatch(/tags\[2\].*needs a "name" or "tagName"/);
+    expect(err.message).toMatch(/tags\[3\].*got null/);
+    expect(err.message).toMatch(/tags\[4\].*empty/);
+  });
+
+  it("fails before reading anything on an invalid arraySize", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller);
+
+    const err = await readError(node, {
+      tags: [{ name: "Arr", arraySize: 0 }, { name: "Arr2", arraySize: 4 }],
+    });
+
+    expect(node.send).not.toHaveBeenCalled();
+    expect(err.message).toMatch(/Invalid arraySize 0 for "Arr"/);
+  });
+
+  it("gives a tag the controller rejects its own error and still reads the others", async () => {
+    const controller = {
+      ...makeController(),
+      readTagGroup: () => Promise.reject({ generalStatusCode: 5, extendedStatus: [] }),
+      readTag: (tag: any) =>
+        tag.name === "Missing"
+          ? Promise.reject({ generalStatusCode: 5, extendedStatus: [] })
+          : Promise.resolve(),
+    };
+    const node = makeReadNode(controller);
+
+    await read(node, { tags: ["Alpha", "Missing", "Beta"] });
+
+    // payload[i] answers tags[i]
+    const payload = payloadOf(node);
+    expect(payload.map((r: any) => r.tagName)).toEqual(["Alpha", "Missing", "Beta"]);
+    expect(payload[0]).toMatchObject({ value: 60 });
+    expect(payload[0].error).toBeUndefined();
+    expect(payload[1].value).toBeNull();
+    expect(payload[1].error).toMatch(/0x05/);
+    expect(payload[2]).toMatchObject({ value: 60 });
+    const status = node.status.mock.calls[node.status.mock.calls.length - 1][0];
+    expect(status.fill).toBe("yellow");
+    expect(status.text).toMatch(/2 of 3 tags read/);
+  });
+
+  it("fails the batch when the group read fails without a CIP status", async () => {
+    const controller = {
+      ...makeController(),
+      readTagGroup: () => Promise.reject(new Error("socket closed")),
+    };
+    const node = makeReadNode(controller);
+
+    const err = await readError(node, { tags: ["Alpha", "Beta"] });
+
+    expect(node.send).not.toHaveBeenCalled();
+    expect(err.message).toMatch(/socket closed/);
+  });
+
+  it("msg.tags wins over the configured Tag Name", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { tagName: "Configured" });
+
+    await read(node, { tags: ["Alpha"] });
+
+    expect(controller.built.map((b) => b.name)).toEqual(["Alpha"]);
+  });
+
+  it("ignores an empty string and reads the configured tag", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { tagName: "Configured" });
+
+    await read(node, { tags: "  " });
+
+    expect(controller.built.map((b) => b.name)).toEqual(["Configured"]);
   });
 });
 
