@@ -99,6 +99,30 @@
      * the dialog half-built, where a property lookup on window just yields undefined and costs
      * the user nothing more than an inert Browse button.
      */
+    /**
+     * Focus a field with the caret at the end of its text, so a picked tag can be extended
+     * with an index such as [3]. A typed input shows its text in its own field, next to the
+     * hidden original, so that is the one to focus.
+     */
+    ns.focusEnd = function ($input) {
+      // After the dropdown has gone, or the removal of its focused filter box takes the focus.
+      setTimeout(function () {
+        var $shown = $input.nextAll(".red-ui-typedInput-container").first().find("input.red-ui-typedInput-input");
+        var el = ($shown.length ? $shown : $input)[0];
+        if (!el) {
+          return;
+        }
+        el.focus();
+        if (typeof el.setSelectionRange === "function") {
+          try {
+            el.setSelectionRange(el.value.length, el.value.length);
+          } catch (e) {
+            /* not a text field */
+          }
+        }
+      }, 0);
+    };
+
     ns.setupTagBrowse = function () {
       var $btn = $("#node-input-browse-btn");
       var $sel = $("#node-input-taglist");
@@ -122,6 +146,7 @@
         } catch (e) {
           /* not a typed input */
         }
+        ns.focusEnd($name);
       };
 
       // A dialog with no inline tag list gets a dropdown under the Browse button instead.
@@ -178,7 +203,7 @@
             // template names), so it stays advisory.
             var $li = $("<li/>").data("name", t.name).appendTo($list);
             $("<span/>", { class: "cip-tag-pop-name" }).text(t.name).appendTo($li);
-            if (t.type) {
+            if (t.type && typeof t.type === "string") {
               $("<span/>", { class: "cip-tag-pop-type" }).text(t.type).appendTo($li);
             }
           });
@@ -269,7 +294,7 @@
                 // A controller reports types this dialog's Data Type list does not offer
                 // (SINT, LINT, LREAL, UDT template names), so it stays advisory and Data
                 // Type is left on Auto-detect.
-                var label = t.name + (t.type ? "  (" + t.type + ")" : "");
+                var label = t.name + (t.type && typeof t.type === "string" ? "  (" + t.type + ")" : "");
                 $sel.append($("<option>").val(t.name).text(label));
               });
               $status.text(tags.length + " tags");
@@ -351,6 +376,10 @@
   .cip-tag-pop-list li:hover,
   .cip-tag-pop-list li.active {
     background: var(--red-ui-list-item-background-hover, #e6e6e6);
+  }
+  /* The hover colour is close to the row colour in the dark theme, so mark the active row too. */
+  .cip-tag-pop-list li.active {
+    box-shadow: inset 3px 0 0 var(--red-ui-text-color-link, #0088cc);
   }
   .cip-tag-pop-name {
     overflow: hidden;

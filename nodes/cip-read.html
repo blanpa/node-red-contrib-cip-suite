@@ -75,6 +75,18 @@
       $tag.typedInput("width", "100%");
       defaultOnMsg($tag, "tagName");
 
+      /** Browsing fills a string, so it is off for a tag that comes from msg or an env variable. */
+      function syncBrowse($input, $button) {
+        function sync() {
+          var browsable = $input.typedInput("type") === "str";
+          $button
+            .prop("disabled", !browsable)
+            .attr("title", browsable ? "Browse tags from PLC" : "Browse is only available for a string tag");
+        }
+        $input.on("typedinputtypechange", sync);
+        sync();
+      }
+
       $dataType.typedInput({
         types: [{ value: "dt", label: "Data type", options: dataTypes }, "msg", "env"],
         typeField: "#node-input-dataTypeType",
@@ -100,6 +112,8 @@
 
       $tagsProp.typedInput({ types: ["msg"], typeField: "#node-input-tagsPropType", default: "msg" });
       $tagsProp.typedInput("width", "100%");
+
+      syncBrowse($tag, $("#node-input-browse-btn"));
 
       if (legacy) {
         // Keep what the node already has. A blank tag was filled from the message, so it stays
@@ -170,6 +184,7 @@
           rowTag.typedInput("width", "100%");
           rowTag.typedInput("type", data.tagNameType || "str");
           rowTag.typedInput("value", data.tagName || "");
+          syncBrowse(rowTag, rowBrowse);
           rowType.val(data.dataType || "auto");
           rowSize.val(data.arraySize === undefined || data.arraySize === null ? "" : data.arraySize);
 
@@ -181,6 +196,7 @@
             browser.browse(rowBrowse, function (name) {
               rowTag.typedInput("type", "str");
               rowTag.typedInput("value", name);
+              window.cipSuiteEditor.focusEnd(rowTag);
             });
           });
 
@@ -359,12 +375,18 @@
   /* A tip wraps inside its row. contain stops its text from setting the minimum width of the
      edit tray, and overflow-wrap breaks a long unbroken word instead of overflowing. */
   #dialog-form .form-tips.cip-read-tip {
+    box-sizing: border-box;
+    /* Under a field: the same left edge and the same 70% as the controls above it. */
+    width: 70%;
+    max-width: none;
     margin: 4px 0 0 104px;
     contain: inline-size;
     overflow-wrap: anywhere;
   }
+  /* Under the list: the list's own edges. */
   #dialog-form .form-tips.cip-read-tip-wide {
-    margin-left: 0;
+    width: auto;
+    margin: 4px 6px 0 6px;
   }
 </style>
 
