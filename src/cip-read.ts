@@ -73,6 +73,8 @@ module.exports = function (RED: any) {
       }
     }
     node._pollTimer = null as ReturnType<typeof setInterval> | null;
+    /** The last failure a poll reported, so a tag that stays unreadable is reported once. */
+    node._lastPollError = null as string | null;
     node._reading = false;
     // Array lengths are a property of the running controller program, so the
     // memo is dropped whenever the connection is re-established.
@@ -477,6 +479,18 @@ module.exports = function (RED: any) {
       };
       /** Which PLC answered. Only stamped when the endpoint opts in, so static output is unchanged. */
       const stamp = (msg: any): any => stampEndpoint(msg, endpoint);
+      /**
+       * A poll has no message, so what it reads is fixed by the node's configuration. If that is
+       * invalid, every later poll would fail the same way, so report it once and stop polling.
+       * Polling starts again the next time the endpoint connects.
+       */
+      const invalidConfig = (message: string): void => {
+        if (!triggerMsg && typeof done !== "function") {
+          stopPolling();
+          message += " Polling stopped.";
+        }
+        settle(new Error(message));
+      };
 
       if (node._reading) {
         settle();
@@ -495,7 +509,7 @@ module.exports = function (RED: any) {
         }
         if (request.kind === "error") {
           node.status({ fill: "red", shape: "ring", text: "invalid input" });
-          settle(new Error(request.error));
+          invalidConfig(request.error);
           return;
         }
 
@@ -505,9 +519,7 @@ module.exports = function (RED: any) {
           const invalid = entries.filter((e) => e.error);
           if (invalid.length > 0) {
             node.status({ fill: "red", shape: "ring", text: `invalid ${request.source}` });
-            settle(
-              new Error(`Invalid ${request.source}, nothing was read. ${invalid.map((e) => e.error).join("; ")}`)
-            );
+            invalidConfig(`Invalid ${request.source}, nothing was read. ${invalid.map((e) => e.error).join("; ")}`);
             return;
           }
 
@@ -530,6 +542,7 @@ module.exports = function (RED: any) {
                 : `${batchResult.length} tags read (${elapsed}ms)`,
           });
           node.send(stamp(msg));
+          node._lastPollError = null;
           settle();
           return;
         }
@@ -574,10 +587,20 @@ module.exports = function (RED: any) {
           text: `${tag} = ${displayValue} (${elapsed}ms)`,
         });
         node.send(stamp(msg));
+        node._lastPollError = null;
         settle();
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
-        settle(toCipError(err, "Read failed"));
+        const failure = toCipError(err, "Read failed");
+        // Polling goes on, since the tag may be created or the PLC may recover, but the same
+        // failure is only reported the first time. The status line keeps showing it.
+        if (!triggerMsg && typeof done !== "function") {
+          if (node._lastPollError === failure.message) {
+            return;
+          }
+          node._lastPollError = failure.message;
+        }
+        settle(failure);
       } finally {
         node._reading = false;
       }
@@ -600,6 +623,7 @@ module.exports = function (RED: any) {
     node.on("cip:connected", function () {
       node.status(STATUS.connected(endpointLabel(node)));
       node._arraySizes.clear();
+      node._lastPollError = null;
       startPolling();
     });
 

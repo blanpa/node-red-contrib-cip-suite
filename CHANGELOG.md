@@ -38,6 +38,10 @@
 - **cip-subscribe** - A `msg.tags` object with `tagName` (what a cip-read batch returns) no
   longer becomes the tag "undefined". `parseTagList()` keeps a comma inside square brackets, so a
   tag such as `Arr[1,2]` is no longer split in two.
+- **cip-read** - An invalid tag list or input is reported once when polling starts, and polling
+  stops until the endpoint reconnects. It no longer raises the same error on every poll.
+- **cip-read** - A polled read the PLC rejects (for example a tag that does not exist yet) keeps
+  polling but reports the error once, and again if it recovers and fails later.
 
 ## 0.2.3 — 2026-11-24
 

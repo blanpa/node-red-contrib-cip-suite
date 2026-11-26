@@ -521,6 +521,79 @@ describe("polling for a node with a mode", () => {
   });
 });
 
+describe("polling an invalid configuration", () => {
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("reports an invalid tag list once and stops polling", async () => {
+    const node = makeReadNode(makeController(), {
+      mode: "multiple",
+      tagList: [{ tagName: "Alpha" }, { tagName: "" }],
+      pollIntervalType: "num",
+      pollInterval: 20,
+    });
+
+    node.emit("cip:connected");
+    await wait(150);
+
+    expect(node.error).toHaveBeenCalledTimes(1);
+    expect(node.error.mock.calls[0][0]).toMatch(/^Invalid tag list, nothing was read.*Polling stopped\.$/);
+    expect(node._pollTimer).toBeNull();
+    expect(node.send).not.toHaveBeenCalled();
+  });
+
+  it("polls again after the endpoint reconnects", async () => {
+    const node = makeReadNode(makeController(), {
+      mode: "multiple",
+      tagList: [{ tagName: "" }],
+      pollIntervalType: "num",
+      pollInterval: 20,
+    });
+
+    node.emit("cip:connected");
+    await wait(100);
+    node.emit("cip:connected");
+    await wait(100);
+
+    expect(node.error).toHaveBeenCalledTimes(2);
+    node.emit("cip:disconnected");
+  });
+
+  it("keeps polling a tag the PLC rejects but reports it once, and again after it recovers", async () => {
+    const good = makeController();
+    const controller: any = { ...good, readTag: () => Promise.reject({ generalStatusCode: 5, extendedStatus: [] }) };
+    const node = makeReadNode(controller, {
+      mode: "single",
+      tagName: "Missing",
+      pollIntervalType: "num",
+      pollInterval: 20,
+    });
+
+    node.emit("cip:connected");
+    await wait(150);
+    expect(node.error).toHaveBeenCalledTimes(1);
+    expect(node._pollTimer).not.toBeNull();
+
+    controller.readTag = good.readTag;
+    await wait(100);
+    expect(node.send).toHaveBeenCalled();
+
+    controller.readTag = () => Promise.reject({ generalStatusCode: 5, extendedStatus: [] });
+    await wait(100);
+    expect(node.error).toHaveBeenCalledTimes(2);
+    node.emit("cip:disconnected");
+  });
+
+  it("leaves a message that fails alone, so it can be fixed and sent again", async () => {
+    const node = makeReadNode(makeController(), {
+      mode: "multiple-msg",
+    });
+
+    const err = await readError(node, { tags: ["Alpha", 5] });
+
+    expect(err.message).not.toMatch(/Polling stopped/);
+  });
+});
+
 describe("failure reporting", () => {
   it("renders a bare CIP rejection rather than passing undefined to node.status", async () => {
     const controller = {
