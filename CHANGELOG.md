@@ -19,6 +19,8 @@
 
 - **cip-read** - **Multiple** mode: a list of tags read together in the order shown, each with an
   optional data type and array size and its own Browse button.
+- **cip-read** - The Browse button now opens a dropdown under the button that lists the tags with
+  their types and filters as you type, in place of a list box in the form.
 - **cip-read** - **Multiple from msg** mode: `msg.tags` (or the property you name) can be an
   array of names, an array of `{ name | tagName, dataType, arraySize }` objects, or a comma
   separated string. A comma inside square brackets stays in the tag name, so `Arr[1,2]` is one tag.
