@@ -345,6 +345,27 @@ module.exports = function (RED) {
             }
             return results;
         }
+        /** What to do about each message property the node ignores. */
+        const UNUSED_PROP_ADVICE = {
+            tags: 'Ignoring msg.tags. Set Mode to "Multiple from msg" and the property to msg.tags to read the tags from the message.',
+            arraySize: 'Ignoring msg.arraySize. Set Array size to "msg" to read it from the message.',
+        };
+        const warnedUnused = new Set();
+        /**
+         * Tell the user, once per deploy, that a message carries a property this node does not
+         * read. A node with a mode only reads what its typed inputs name, so a flow that used to
+         * rely on msg.tags or msg.arraySize overriding the node would otherwise just change.
+         */
+        function warnUnusedProps(triggerMsg) {
+            if (!plan)
+                return;
+            for (const name of plan.unusedProps(triggerMsg)) {
+                if (warnedUnused.has(name))
+                    continue;
+                warnedUnused.add(name);
+                node.warn(UNUSED_PROP_ADVICE[name]);
+            }
+        }
         /**
          * What to read for a node saved before modes existed: the message can override the
          * node, as it always could. Left exactly as it was so deployed flows do not change.
@@ -389,6 +410,8 @@ module.exports = function (RED) {
             }
             node._reading = true;
             try {
+                if (triggerMsg)
+                    warnUnusedProps(triggerMsg);
                 const request = plan ? plan.resolve(triggerMsg) : legacyRequest(triggerMsg);
                 if (request.kind === "none") {
                     node.warn(request.reason);

@@ -384,6 +384,79 @@ describe("a node with a mode", () => {
   });
 });
 
+describe("warning about message properties a node with a mode ignores", () => {
+  const warnings = (node: any) => node.warn.mock.calls.map((c: any[]) => c[0]);
+
+  it("warns once about msg.tags on a node that reads its tag from its settings", async () => {
+    const node = makeReadNode(makeController(), { mode: "single", tagName: "Configured", tagNameType: "str" });
+
+    await read(node, { tags: ["Other"] });
+    await read(node, { tags: ["Other"] });
+    await read(node, { tags: ["Other"] });
+
+    const found = warnings(node).filter((w: string) => w.startsWith("Ignoring msg.tags"));
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatch(/Multiple from msg/);
+  });
+
+  it("warns once about msg.arraySize", async () => {
+    const node = makeReadNode(makeController(), { mode: "single", tagName: "Arr", dataType: "ARRAY" });
+
+    await read(node, { arraySize: 5 });
+    await read(node, { arraySize: 5 });
+
+    const found = warnings(node).filter((w: string) => w.startsWith("Ignoring msg.arraySize"));
+    expect(found).toHaveLength(1);
+  });
+
+  it("warns about each property once, not once between them", async () => {
+    const node = makeReadNode(makeController(), { mode: "single", tagName: "A" });
+
+    await read(node, { tags: ["X"] });
+    await read(node, { tags: ["X"], arraySize: 3 });
+
+    expect(warnings(node).filter((w: string) => w.startsWith("Ignoring"))).toHaveLength(2);
+  });
+
+  it("does not warn about tagName or dataType, so a chain of cip-read nodes stays quiet", async () => {
+    const node = makeReadNode(makeController(), { mode: "single", tagName: "Configured", tagNameType: "str" });
+
+    await read(node, { tagName: "FromUpstream", dataType: "DINT", payload: 1 });
+
+    expect(node.warn).not.toHaveBeenCalled();
+  });
+
+  it("does not warn when multiple from msg reads msg.tags", async () => {
+    const node = makeReadNode(makeController(), { mode: "multiple-msg" });
+
+    await read(node, { tags: ["A"] });
+
+    expect(node.warn).not.toHaveBeenCalled();
+  });
+
+  it("does not warn when the array size is read from msg.arraySize", async () => {
+    const node = makeReadNode(makeController(), {
+      mode: "single",
+      tagName: "Arr",
+      dataType: "ARRAY",
+      arraySizeType: "msg",
+      arraySize: "arraySize",
+    });
+
+    await read(node, { arraySize: 5 });
+
+    expect(node.warn).not.toHaveBeenCalled();
+  });
+
+  it("does not warn a node that has no mode, where msg.tags still wins", async () => {
+    const node = makeReadNode(makeController(), { tagName: "Configured" });
+
+    await read(node, { tags: ["Other"], arraySize: 5 });
+
+    expect(node.warn).not.toHaveBeenCalled();
+  });
+});
+
 describe("polling for a node with a mode", () => {
   it("polls at a num interval from a fixed source", () => {
     const node = makeReadNode(makeController(), {

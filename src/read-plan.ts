@@ -41,7 +41,21 @@ export interface ReadPlan {
   dynamic: boolean;
   poll: PollSetting;
   resolve(msg: any): ReadRequest;
+  /**
+   * Message properties that are present but that this node does not read, out of the two
+   * cip-subscribe sends and a user might expect to work: "tags" and "arraySize". tagName
+   * and dataType are left out on purpose, since cip-read stamps both on its own output and
+   * a cip-read wired after another one would always see them.
+   */
+  unusedProps(msg: any): string[];
 }
+
+/** Message properties a node might expect to work that it only reads when configured to. */
+const WATCHED_PROPS = ["tags", "arraySize"];
+
+/** True when `path` (such as "tags" or "tags[0]") is, or is under, the top level property `name`. */
+const readsProp = (path: string, name: string): boolean =>
+  path === name || path.startsWith(`${name}.`) || path.startsWith(`${name}[`);
 
 const MODES: ReadMode[] = ["single", "multiple", "multiple-msg"];
 
@@ -187,10 +201,24 @@ export function buildReadPlan(config: any, evalProp: EvalProp): ReadPlan | null 
     return { kind: "batch", entries: parseBatchTags(raw), source: `msg.${prop}` };
   }
 
+  // The message properties this plan reads, as the typed inputs name them
+  const read: string[] = [];
+  if (mode === "single") {
+    if (tagNameType === "msg") read.push(asText(config.tagName));
+    if (dataTypeType === "msg") read.push(asText(config.dataType));
+    if (arraySizeType === "msg") read.push(asText(config.arraySize));
+  } else if (mode === "multiple-msg") {
+    read.push(asText(config.tagsProp) || "tags");
+  }
+
   return {
     mode,
     dynamic,
     poll: resolvePoll(config, evalProp),
     resolve: mode === "single" ? resolveSingle : mode === "multiple" ? resolveMultiple : resolveFromMsg,
+    unusedProps: (msg: any): string[] =>
+      msg && typeof msg === "object"
+        ? WATCHED_PROPS.filter((name) => msg[name] !== undefined && !read.some((path) => readsProp(path, name)))
+        : [],
   };
 }

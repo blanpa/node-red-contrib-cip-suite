@@ -16,6 +16,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolvePoll = resolvePoll;
 exports.buildReadPlan = buildReadPlan;
 const utils_1 = require("./utils");
+/** Message properties a node might expect to work that it only reads when configured to. */
+const WATCHED_PROPS = ["tags", "arraySize"];
+/** True when `path` (such as "tags" or "tags[0]") is, or is under, the top level property `name`. */
+const readsProp = (path, name) => path === name || path.startsWith(`${name}.`) || path.startsWith(`${name}[`);
 const MODES = ["single", "multiple", "multiple-msg"];
 const isBlank = (v) => v === undefined || v === null || (typeof v === "string" && v.trim() === "");
 /** A string for a tag name, or "" when there is nothing usable. */
@@ -159,11 +163,27 @@ function buildReadPlan(config, evalProp) {
         }
         return { kind: "batch", entries: (0, utils_1.parseBatchTags)(raw), source: `msg.${prop}` };
     }
+    // The message properties this plan reads, as the typed inputs name them
+    const read = [];
+    if (mode === "single") {
+        if (tagNameType === "msg")
+            read.push(asText(config.tagName));
+        if (dataTypeType === "msg")
+            read.push(asText(config.dataType));
+        if (arraySizeType === "msg")
+            read.push(asText(config.arraySize));
+    }
+    else if (mode === "multiple-msg") {
+        read.push(asText(config.tagsProp) || "tags");
+    }
     return {
         mode,
         dynamic,
         poll: resolvePoll(config, evalProp),
         resolve: mode === "single" ? resolveSingle : mode === "multiple" ? resolveMultiple : resolveFromMsg,
+        unusedProps: (msg) => msg && typeof msg === "object"
+            ? WATCHED_PROPS.filter((name) => msg[name] !== undefined && !read.some((path) => readsProp(path, name)))
+            : [],
     };
 }
 //# sourceMappingURL=read-plan.js.map

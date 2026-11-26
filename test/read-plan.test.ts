@@ -252,3 +252,47 @@ describe("resolvePoll", () => {
     expect(poll.error).toContain("NOPE");
   });
 });
+
+describe("unusedProps", () => {
+  it("reports msg.tags and msg.arraySize on a node that does not read them", () => {
+    const p = plan({ mode: "single", tagName: "A", tagNameType: "str" });
+    expect(p.unusedProps({ tags: ["X"], arraySize: 4 })).toEqual(["tags", "arraySize"]);
+    expect(p.unusedProps({ tags: ["X"] })).toEqual(["tags"]);
+    expect(p.unusedProps({ arraySize: 4 })).toEqual(["arraySize"]);
+  });
+
+  it("never reports tagName or dataType, which cip-read stamps on its own output", () => {
+    const p = plan({ mode: "single", tagName: "A", tagNameType: "str" });
+    expect(p.unusedProps({ tagName: "X", dataType: "DINT", payload: 1 })).toEqual([]);
+  });
+
+  it("reports nothing for a message without them", () => {
+    expect(plan({ mode: "multiple" }).unusedProps({})).toEqual([]);
+    expect(plan({ mode: "multiple" }).unusedProps(undefined)).toEqual([]);
+  });
+
+  it("does not report msg.tags when multiple from msg reads it", () => {
+    expect(plan({ mode: "multiple-msg" }).unusedProps({ tags: ["A"] })).toEqual([]);
+    expect(plan({ mode: "multiple-msg", tagsProp: "tags.list" }).unusedProps({ tags: { list: ["A"] } })).toEqual([]);
+  });
+
+  it("reports msg.tags when multiple from msg reads a different property", () => {
+    const p = plan({ mode: "multiple-msg", tagsProp: "list" });
+    expect(p.unusedProps({ list: ["A"], tags: ["Other"] })).toEqual(["tags"]);
+  });
+
+  it("does not report msg.arraySize when the array size is read from it", () => {
+    const p = plan({ mode: "single", tagName: "A", dataType: "ARRAY", arraySizeType: "msg", arraySize: "arraySize" });
+    expect(p.unusedProps({ arraySize: 4 })).toEqual([]);
+  });
+
+  it("reports msg.arraySize when the array size is read from another property", () => {
+    const p = plan({ mode: "single", tagName: "A", dataType: "ARRAY", arraySizeType: "msg", arraySize: "size" });
+    expect(p.unusedProps({ arraySize: 4, size: 4 })).toEqual(["arraySize"]);
+  });
+
+  it("does not mistake a property that merely starts with the same letters", () => {
+    const p = plan({ mode: "single", tagName: "tagsList", tagNameType: "msg" });
+    expect(p.unusedProps({ tags: ["A"], tagsList: "B" })).toEqual(["tags"]);
+  });
+});
