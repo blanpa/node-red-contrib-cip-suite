@@ -440,35 +440,58 @@ function parseTagList(input) {
             // fall through to comma split
         }
     }
-    // A comma inside [...] belongs to the tag name ("Arr[1,2]"), so only top level
-    // commas separate tags.
+    return splitTopLevel(trimmed).filter(Boolean);
+}
+/**
+ * Split on top level commas and trim each part, keeping empty ones. A comma inside
+ * [...] belongs to the tag name ("Arr[1,2]"), so it does not separate tags.
+ */
+function splitTopLevel(input) {
     const parts = [];
     let depth = 0;
     let current = "";
-    for (const ch of trimmed) {
+    for (const ch of input) {
         if (ch === "[")
             depth++;
         else if (ch === "]" && depth > 0)
             depth--;
         if (ch === "," && depth === 0) {
-            parts.push(current);
+            parts.push(current.trim());
             current = "";
         }
         else {
             current += ch;
         }
     }
-    parts.push(current);
-    return parts.map((s) => s.trim()).filter(Boolean);
+    parts.push(current.trim());
+    return parts;
 }
 /**
  * Turn a batch `tags` value into entries. Accepts a comma separated string, or an array
  * of tag names and `{ name | tagName, dataType, arraySize }` objects. An entry that cannot
- * be understood is returned with an `error` so the rest of the batch still runs.
+ * be understood is returned with an `error` and a name of `tags[i]`, so the caller can
+ * report every bad entry by position and refuse the whole batch.
  */
 function parseBatchTags(input) {
     if (typeof input === "string") {
-        return parseTagList(input).map((name) => ({ name }));
+        const trimmed = input.trim();
+        if (trimmed === "")
+            return [];
+        if (trimmed.startsWith("[")) {
+            try {
+                const arr = JSON.parse(trimmed);
+                if (Array.isArray(arr))
+                    return parseBatchTags(arr);
+            }
+            catch {
+                // not JSON, so it is a name such as "Arr[1,2]"
+            }
+        }
+        // Unlike parseTagList, an empty segment is an error: the results line up with the
+        // entries as written, so "A,,C" must not quietly turn C into the second result.
+        return splitTopLevel(trimmed).map((name, index) => name
+            ? { name }
+            : { name: `tags[${index}]`, error: `Invalid tag entry at tags[${index}]: the tag name is empty` });
     }
     if (!Array.isArray(input))
         return [];
@@ -476,7 +499,7 @@ function parseBatchTags(input) {
     input.forEach((item, index) => {
         if (typeof item === "string") {
             const name = item.trim();
-            // Every array slot gets a result, so payload[i] always answers tags[i].
+            // A blank entry is an error, not skipped, so an index in a message never shifts.
             entries.push(name
                 ? { name }
                 : { name: `tags[${index}]`, error: `Invalid tag entry at tags[${index}]: the tag name is empty` });
