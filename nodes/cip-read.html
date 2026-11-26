@@ -149,7 +149,8 @@
         console.warn("cip-suite: tag browse unavailable, cip-endpoint's editor script did not load");
       }
 
-      // Multiple: one row per tag
+      // Multiple: one row per tag. Rows added while the dialog loads must not take the focus.
+      var loading = true;
       var $list = $("#node-input-tagList-container");
       $list.css("min-height", "150px").editableList({
         sortable: true,
@@ -205,9 +206,31 @@
           }
           rowType.on("change", showSize);
           showSize();
+
+          // A row added by the user, with the button or its accesskey, is ready to type in.
+          if (!loading) {
+            setTimeout(function () {
+              if (row[0] && row[0].scrollIntoView) {
+                row[0].scrollIntoView({ block: "nearest" });
+              }
+              if (window.cipSuiteEditor) {
+                window.cipSuiteEditor.focusEnd(rowTag);
+              }
+            }, 0);
+          }
         }
       });
       $list.editableList("addItems", node.tagList || []);
+      loading = false;
+
+      // The browser handles an accesskey itself: Alt+T in Chrome and Edge, Alt+Shift+T in
+      // Firefox, Ctrl+Option+T on a Mac. Not A: Node-RED binds a chord that starts with Alt+A
+      // and swallows the key. A browser does not mark the letter, so underline it here.
+      $("#dialog-form .cip-read-multiple .red-ui-editableList-addButton")
+        .attr({ accesskey: "t", title: "Add a tag (accesskey T)" })
+        .empty()
+        .append('<i class="fa fa-plus"></i> ')
+        .append($("<span/>").html("add <u>t</u>ag"));
 
       /** True when a message supplies a value, so there is nothing to read on a timer. */
       function isDynamic() {
@@ -455,7 +478,13 @@
   attribute, the length is found by a bisecting index probe. The result is cached until
   the connection is re-established, so polling an array costs one request per poll.</p>
   <p>Click the <i class="fa fa-search"></i> button next to the tag name field, or on a row of the list, to
-  browse available tags from the connected PLC. The endpoint must be deployed and connected first.</p>
+  browse available tags from the connected PLC. The endpoint must be deployed and connected first. The
+  list shows each tag with its type and filters as you type: every word must match the name or the type,
+  ignoring case and punctuation, so <code>em di 01</code> finds <code>_IO_EM_DI_01</code> and
+  <code>bool em do</code> finds the BOOL tags named EM_DO. Browsing fills a string, so the button is off
+  when the tag comes from <code>msg</code> or an environment variable.</p>
+  <p>In Multiple mode the <b>add tag</b> button has an accesskey, <b>Alt+T</b> in Chrome and Edge
+  (<b>Alt+Shift+T</b> in Firefox, <b>Ctrl+Option+T</b> on a Mac), and a new row takes the focus.</p>
   <h3>Tag Addressing</h3>
   <ul>
     <li><b>Bit-level access:</b> Use dot notation to read individual bits, e.g. <code>MyDint.5</code> reads bit 5 of a DINT tag.</li>

@@ -168,11 +168,32 @@
         // Inside the tray, so it goes when the dialog does and is not clipped by the form.
         var $host = $anchor.closest(".red-ui-tray");
         $pop = $("<div/>", { class: "cip-tag-pop" }).appendTo($host.length ? $host : $(document.body));
-        var $filter = $("<input/>", { type: "text", class: "cip-tag-pop-filter", placeholder: "Filter " + tags.length + " tags" }).appendTo($pop);
+        var $filter = $("<input/>", {
+          type: "text",
+          class: "cip-tag-pop-filter",
+          placeholder: "Filter " + tags.length + " tags by name or type"
+        }).appendTo($pop);
         var $list = $("<ul/>", { class: "cip-tag-pop-list" }).appendTo($pop);
         var $note = $("<div/>", { class: "cip-tag-pop-note" }).appendTo($pop);
         var rows = [];
         var active = -1;
+
+        // What a tag is matched against: its name and its type, in full and with the
+        // punctuation taken out, so "em di 01" finds _IO_EM_DI_01 and "emdi01" does too.
+        var squash = function (text) {
+          return text.toLowerCase().replace(/[^a-z0-9]/g, "");
+        };
+        var haystacks = tags.map(function (t) {
+          var text = (t.name + " " + (typeof t.type === "string" ? t.type : "")).toLowerCase();
+          return { text: text, squashed: squash(text) };
+        });
+        var matches = function (words, index) {
+          var h = haystacks[index];
+          return words.every(function (word) {
+            var squashed = squash(word);
+            return h.text.indexOf(word) !== -1 || (squashed !== "" && h.squashed.indexOf(squashed) !== -1);
+          });
+        };
 
         var setActive = function (index) {
           $list.children(".active").removeClass("active");
@@ -191,11 +212,11 @@
           }
         };
         var render = function () {
-          var q = $.trim($filter.val()).toLowerCase();
-          var matches = tags.filter(function (t) {
-            return !q || t.name.toLowerCase().indexOf(q) !== -1;
+          var words = $.trim($filter.val()).toLowerCase().split(/[\s,]+/).filter(Boolean);
+          var found = tags.filter(function (t, index) {
+            return !words.length || matches(words, index);
           });
-          rows = matches.slice(0, MAX_SHOWN);
+          rows = found.slice(0, MAX_SHOWN);
           $list.empty();
           rows.forEach(function (t) {
             // The type helps you pick a tag and is never part of the value. A controller
@@ -209,15 +230,15 @@
           });
           $note
             .text(
-              !matches.length
+              !found.length
                 ? tags.length
                   ? "No tags match"
                   : "No tags found"
-                : matches.length > MAX_SHOWN
-                  ? "Showing " + MAX_SHOWN + " of " + matches.length + ". Type to narrow."
+                : found.length > MAX_SHOWN
+                  ? "Showing " + MAX_SHOWN + " of " + found.length + ". Type to narrow."
                   : ""
             )
-            .toggle(!rows.length || matches.length > MAX_SHOWN);
+            .toggle(!rows.length || found.length > MAX_SHOWN);
           setActive(0);
         };
 

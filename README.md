@@ -90,7 +90,8 @@ an object.
 - **Single** reads one tag. Tag Name, Data Type, Array size and Poll each come from a string, a
   number, an environment variable or a message property (`msg`), as the field's type says.
 - **Multiple** reads a list of tags in the order shown, with an optional data type and array size
-  per row. A Browse button on each row fills its tag.
+  per row. A Browse button on each row fills its tag, and the add button has an accesskey (Alt+T).
+  The tag list filters by name or type as you type, ignoring case and punctuation.
 - **Multiple from msg** reads the tags from a message property, `msg.tags` by default: an array
   of names, an array of `{ name, dataType, arraySize }` objects, or a comma separated string.
 

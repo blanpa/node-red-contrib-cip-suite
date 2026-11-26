@@ -20,7 +20,10 @@
 - **cip-read** - **Multiple** mode: a list of tags read together in the order shown, each with an
   optional data type and array size and its own Browse button.
 - **cip-read** - The Browse button now opens a dropdown under the button that lists the tags with
-  their types and filters as you type, in place of a list box in the form.
+  their types and filters as you type, in place of a list box in the form. Every word you type must
+  match the name or the type, ignoring case and punctuation, so `em di 01` finds `_IO_EM_DI_01`.
+  Browse is off for a tag that comes from `msg` or an environment variable. In Multiple mode the add
+  button has an accesskey (Alt+T) and a new row takes the focus.
 - **cip-read** - **Multiple from msg** mode: `msg.tags` (or the property you name) can be an
   array of names, an array of `{ name | tagName, dataType, arraySize }` objects, or a comma
   separated string. A comma inside square brackets stays in the tag name, so `Arr[1,2]` is one tag.
