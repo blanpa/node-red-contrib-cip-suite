@@ -30,6 +30,7 @@ import {
   cipErrorFields,
 } from "./utils";
 import { ArraySizeCache, resolveArrayLength } from "./tag-array";
+import { ReadPlan, ReadRequest, buildReadPlan } from "./read-plan";
 import {
   DynOpts,
   MsgEndpoint,
@@ -49,6 +50,28 @@ module.exports = function (RED: any) {
     node.tagName = config.tagName || "";
     node.dataType = config.dataType || "auto";
     node.pollInterval = parseInt(config.pollInterval, 10) || 0;
+
+    // A node with a mode takes every value from the source its typed input names. One saved
+    // before modes existed has no plan and behaves as it always did.
+    const plan: ReadPlan | null = buildReadPlan(config, (value, type, msg) =>
+      RED.util.evaluateNodeProperty(value, type, node, msg)
+    );
+    if (plan) {
+      // These fields mean something else (or nothing) once a mode is set, so a stray value
+      // must not leak into a read.
+      node.tagName = "";
+      node.dataType = "auto";
+      node.pollInterval = 0;
+      if (plan.poll.error) {
+        node.error(plan.poll.error);
+      } else if (plan.poll.interval > 0) {
+        if (plan.dynamic) {
+          node.warn("Poll interval ignored: a message supplies a value, so there is nothing to read on a timer");
+        } else {
+          node.pollInterval = plan.poll.interval;
+        }
+      }
+    }
     node._pollTimer = null as ReturnType<typeof setInterval> | null;
     node._reading = false;
     // Array lengths are a property of the running controller program, so the
@@ -395,6 +418,28 @@ module.exports = function (RED: any) {
     }
 
     /**
+     * What to read for a node saved before modes existed: the message can override the
+     * node, as it always could. Left exactly as it was so deployed flows do not change.
+     */
+    function legacyRequest(triggerMsg?: any): ReadRequest {
+      // msg.tags (an array, or a comma separated string) wins over the configured Tag Name.
+      const batchTags = triggerMsg?.tags;
+      if (Array.isArray(batchTags) || (typeof batchTags === "string" && batchTags.trim() !== "")) {
+        return { kind: "batch", entries: parseBatchTags(batchTags), source: "msg.tags" };
+      }
+
+      const tag = (triggerMsg && triggerMsg.tagName) || node.tagName;
+      if (!tag) return { kind: "none", reason: "No tag name specified" };
+
+      return {
+        kind: "single",
+        tag,
+        dataType: triggerMsg?.dataType,
+        arraySize: triggerMsg?.arraySize != null ? parseInt(String(triggerMsg.arraySize), 10) : undefined,
+      };
+    }
+
+    /**
      * Read the configured tag and send the result.
      */
     async function doRead(triggerMsg?: any, done?: any, use?: any): Promise<void> {
@@ -419,18 +464,28 @@ module.exports = function (RED: any) {
 
       node._reading = true;
       try {
-        // msg.tags (an array, or a comma separated string) wins over the configured Tag Name.
-        const batchTags = triggerMsg?.tags;
-        if (
-          Array.isArray(batchTags) ||
-          (typeof batchTags === "string" && batchTags.trim() !== "")
-        ) {
+        const request = plan ? plan.resolve(triggerMsg) : legacyRequest(triggerMsg);
+
+        if (request.kind === "none") {
+          node.warn(request.reason);
+          settle();
+          return;
+        }
+        if (request.kind === "error") {
+          node.status({ fill: "red", shape: "ring", text: "invalid input" });
+          settle(new Error(request.error));
+          return;
+        }
+
+        if (request.kind === "batch") {
           // A malformed entry is a flow bug, so nothing is read until every entry is valid.
-          const entries = parseBatchTags(batchTags);
+          const entries = request.entries;
           const invalid = entries.filter((e) => e.error);
           if (invalid.length > 0) {
-            node.status({ fill: "red", shape: "ring", text: "invalid msg.tags" });
-            settle(new Error(`Invalid msg.tags, nothing was read. ${invalid.map((e) => e.error).join("; ")}`));
+            node.status({ fill: "red", shape: "ring", text: `invalid ${request.source}` });
+            settle(
+              new Error(`Invalid ${request.source}, nothing was read. ${invalid.map((e) => e.error).join("; ")}`)
+            );
             return;
           }
 
@@ -440,8 +495,8 @@ module.exports = function (RED: any) {
           const msg: any = {
             payload: batchResult,
             timestamp: Date.now(),
-            _msgid: triggerMsg._msgid,
-            topic: triggerMsg.topic,
+            _msgid: triggerMsg?._msgid,
+            topic: triggerMsg?.topic,
           };
           const failed = batchResult.filter((r) => r.error).length;
           node.status({
@@ -457,21 +512,8 @@ module.exports = function (RED: any) {
           return;
         }
 
-        const tag = (triggerMsg && triggerMsg.tagName) || node.tagName;
-        if (!tag) {
-          node.warn("No tag name specified");
-          settle();
-          return;
-        }
-
-        const readOptions = {
-          dataType: triggerMsg?.dataType,
-          arraySize:
-            triggerMsg?.arraySize != null
-              ? parseInt(String(triggerMsg.arraySize), 10)
-              : undefined,
-        };
-
+        const tag = request.tag;
+        const readOptions = { dataType: request.dataType, arraySize: request.arraySize };
 
         const { result, elapsed } = await withTiming(() =>
           readSingleTag(tag, readOptions, endpoint)

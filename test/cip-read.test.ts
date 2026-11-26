@@ -58,6 +58,11 @@ function loadModule() {
       getNode: (id: string) => endpoints[id] || null,
       eachNode: () => undefined,
     },
+    util: {
+      // msg values are looked up by property name, env by variable name
+      evaluateNodeProperty: (value: string, type: string, _node: any, msg: any) =>
+        type === "msg" ? msg?.[value] : type === "env" ? testEnv[value] : value,
+    },
     httpAdmin: { get: () => undefined },
     auth: { needsPermission: () => () => undefined },
     log: { info: () => undefined },
@@ -68,6 +73,7 @@ function loadModule() {
 }
 
 const endpoints: Record<string, any> = {};
+const testEnv: Record<string, string> = { TAG: "EnvTag", RATE: "3000", BADRATE: "soon" };
 
 function makeReadNode(controller: any, config: Record<string, any> = {}) {
   endpoints.ep1 = {
@@ -241,6 +247,204 @@ describe("batch reads from msg.tags", () => {
     await read(node, { tags: "  " });
 
     expect(controller.built.map((b) => b.name)).toEqual(["Configured"]);
+  });
+});
+
+describe("a node with a mode", () => {
+  const payloadOf = (node: any) => node.send.mock.calls[0][0].payload;
+  const builtNames = (controller: any) => controller.built.map((b: any) => b.name);
+
+  it("ignores msg.tagName and msg.tags when the tag is a str", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { mode: "single", tagName: "Configured", tagNameType: "str" });
+
+    await read(node, { tagName: "FromMsg", tags: ["Other"] });
+
+    expect(builtNames(controller)).toEqual(["Configured"]);
+  });
+
+  it("still lets msg.tagName override a node that has no mode", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { tagName: "Configured" });
+
+    await read(node, { tagName: "FromMsg" });
+
+    expect(builtNames(controller)).toEqual(["FromMsg"]);
+  });
+
+  it("takes the tag from the message property it names", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { mode: "single", tagName: "which", tagNameType: "msg" });
+
+    await read(node, { which: "Alpha", tagName: "Ignored" });
+
+    expect(builtNames(controller)).toEqual(["Alpha"]);
+  });
+
+  it("takes the tag from an environment variable", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { mode: "single", tagName: "TAG", tagNameType: "env" });
+
+    await read(node, {});
+
+    expect(builtNames(controller)).toEqual(["EnvTag"]);
+  });
+
+  it("warns and sends nothing when the tag is empty", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { mode: "single", tagName: "tagName", tagNameType: "msg" });
+
+    await read(node, {});
+
+    expect(node.warn).toHaveBeenCalledWith("No tag name specified");
+    expect(node.send).not.toHaveBeenCalled();
+  });
+
+  it("fails on an array size that is not a positive whole number", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, {
+      mode: "single",
+      tagName: "Arr",
+      dataType: "ARRAY",
+      arraySizeType: "msg",
+      arraySize: "size",
+    });
+
+    const err = await readError(node, { size: 0 });
+
+    expect(err.message).toMatch(/Invalid array size for "Arr" 0/);
+    expect(node.send).not.toHaveBeenCalled();
+    expect(controller.built).toEqual([]);
+  });
+
+  it("reads the configured list in order and ignores msg.tags", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, {
+      mode: "multiple",
+      tagList: [
+        { tagName: "Alpha", tagNameType: "str", dataType: "auto" },
+        { tagName: "TAG", tagNameType: "env", dataType: "auto" },
+      ],
+    });
+
+    await read(node, { tags: ["Ignored"] });
+
+    expect(payloadOf(node).map((r: any) => r.tagName)).toEqual(["Alpha", "EnvTag"]);
+  });
+
+  it("refuses an invalid list row before reading anything", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, {
+      mode: "multiple",
+      tagList: [{ tagName: "Alpha" }, { tagName: "" }],
+    });
+
+    const err = await readError(node, {});
+
+    expect(err.message).toMatch(/^Invalid tag list, nothing was read/);
+    expect(err.message).toMatch(/tags\[1\].*empty/);
+    expect(node.send).not.toHaveBeenCalled();
+  });
+
+  it("reads msg.tags by default in multiple from msg", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { mode: "multiple-msg", tagName: "Configured" });
+
+    await read(node, { tags: "Alpha, Beta", tagName: "Ignored" });
+
+    expect(payloadOf(node).map((r: any) => r.tagName)).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("reads the message property that multiple from msg names", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { mode: "multiple-msg", tagsProp: "list", tagsPropType: "msg" });
+
+    await read(node, { list: ["Alpha"], tags: ["Ignored"] });
+
+    expect(builtNames(controller)).toEqual(["Alpha"]);
+  });
+
+  it("refuses a malformed entry in multiple from msg, naming the property", async () => {
+    const controller = makeController();
+    const node = makeReadNode(controller, { mode: "multiple-msg", tagsProp: "list", tagsPropType: "msg" });
+
+    const err = await readError(node, { list: ["Alpha", 1] });
+
+    expect(err.message).toMatch(/^Invalid msg\.list, nothing was read/);
+    expect(node.send).not.toHaveBeenCalled();
+  });
+
+  it("warns when multiple from msg has no tags", async () => {
+    const node = makeReadNode(makeController(), { mode: "multiple-msg" });
+
+    await read(node, {});
+
+    expect(node.warn).toHaveBeenCalledWith("No tags in msg.tags");
+    expect(node.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("polling for a node with a mode", () => {
+  it("polls at a num interval from a fixed source", () => {
+    const node = makeReadNode(makeController(), {
+      mode: "single",
+      tagName: "A",
+      pollIntervalType: "num",
+      pollInterval: 2000,
+    });
+    expect(node.pollInterval).toBe(2000);
+  });
+
+  it("polls at an interval from an environment variable", () => {
+    const node = makeReadNode(makeController(), {
+      mode: "multiple",
+      tagList: [{ tagName: "A" }],
+      pollIntervalType: "env",
+      pollInterval: "RATE",
+    });
+    expect(node.pollInterval).toBe(3000);
+  });
+
+  it("does not poll with type none", () => {
+    const node = makeReadNode(makeController(), { mode: "single", tagName: "A", pollIntervalType: "none", pollInterval: 500 });
+    expect(node.pollInterval).toBe(0);
+  });
+
+  it("does not poll when a message supplies the tag, and warns", () => {
+    const node = makeReadNode(makeController(), {
+      mode: "single",
+      tagName: "which",
+      tagNameType: "msg",
+      pollIntervalType: "num",
+      pollInterval: 2000,
+    });
+    expect(node.pollInterval).toBe(0);
+    expect(node.warn).toHaveBeenCalledTimes(1);
+    expect(node.warn.mock.calls[0][0]).toMatch(/Poll interval ignored/);
+  });
+
+  it("does not poll in multiple from msg, and warns", () => {
+    const node = makeReadNode(makeController(), { mode: "multiple-msg", pollIntervalType: "num", pollInterval: 1000 });
+    expect(node.pollInterval).toBe(0);
+    expect(node.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("names an interval that is not usable and does not poll", () => {
+    const node = makeReadNode(makeController(), {
+      mode: "single",
+      tagName: "A",
+      pollIntervalType: "env",
+      pollInterval: "BADRATE",
+    });
+    expect(node.pollInterval).toBe(0);
+    expect(node.error).toHaveBeenCalledTimes(1);
+    expect(node.error.mock.calls[0][0]).toContain('"soon"');
+  });
+
+  it("keeps the saved interval of a node with no mode", () => {
+    const node = makeReadNode(makeController(), { tagName: "A", pollInterval: 500 });
+    expect(node.pollInterval).toBe(500);
+    expect(node.warn).not.toHaveBeenCalled();
   });
 });
 
