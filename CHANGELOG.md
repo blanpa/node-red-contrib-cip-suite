@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **cip-read** - **Mode selector and typed inputs.** A new Mode (Single, Multiple, Multiple from
+  msg) sits under Endpoint, and Tag Name, Data Type, Array size and Poll are typed inputs. A node
+  now only reads a message property when a field is set to `msg`: `msg.tagName`, `msg.tags`,
+  `msg.dataType` and `msg.arraySize` no longer override the node. **This applies to a node
+  saved before modes existed as soon as it is edited and saved.** Until then it behaves exactly
+  as before. Opening one shows Single mode with its Data Type and poll interval kept, a filled
+  Tag Name as a string, and an empty one reading `msg.tagName`. After saving, a message carrying
+  `msg.tags` or `msg.arraySize` that the node is not set to read logs a warning once per deploy.
+- **cip-read** - Poll is hidden and saved as None whenever a message supplies a value, since a
+  poll tick has no message. An interval that is not a positive whole number is reported by name.
+
+### Added
+
+- **cip-read** - **Multiple** mode: a list of tags read together in the order shown, each with an
+  optional data type and array size and its own Browse button.
+- **cip-read** - **Multiple from msg** mode: `msg.tags` (or the property you name) can be an
+  array of names, an array of `{ name | tagName, dataType, arraySize }` objects, or a comma
+  separated string. A comma inside square brackets stays in the tag name, so `Arr[1,2]` is one tag.
+
+### Fixed
+
+- **cip-read** - One tag the controller rejects no longer loses the whole batch. The others are
+  read and the rejected tag carries its own `error`. The node status turns yellow.
+- **cip-read** - An entry that is not valid (a number, an empty name, an object without a name,
+  a bad `arraySize`) now fails the message before anything is read, naming each bad entry by
+  position, instead of failing partway through.
+- **cip-subscribe** - A `msg.tags` object with `tagName` (what a cip-read batch returns) no
+  longer becomes the tag "undefined". `parseTagList()` keeps a comma inside square brackets, so a
+  tag such as `Arr[1,2]` is no longer split in two.
+
 ## 0.2.3 — 2026-11-24
 
 Thanks to [@Steve-Mcl](https://github.com/Steve-Mcl) for most of this release: the reports

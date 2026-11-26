@@ -79,11 +79,27 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | STRING | `MyString`, `MyUDT.Name` | Text, as a tag or as a UDT member (needs tag list). Text longer than the string fails the write |
 | Array of UDTs | `MyUDT` where `MyUDT : MyType[5]` | One object per element |
 | Program-scoped | `Program:MainProgram.MyTag` | Tag inside a program |
-| Batch | `msg.tags = ["Tag1","Tag2"]` | Multi-tag read via TagGroup |
+| Batch | Mode **Multiple**, or **Multiple from msg** with `msg.tags = ["Tag1","Tag2"]` | Multi-tag read via TagGroup |
 
 Tag paths are matched **case-insensitively**, the way Logix itself treats them —
 `fis_stn[0].local` and `FIS_Stn[0].Local` address the same tag and both decode into
 an object.
+
+**cip-read modes.** A **Mode** selector chooses what is read:
+
+- **Single** reads one tag. Tag Name, Data Type, Array size and Poll each come from a string, a
+  number, an environment variable or a message property (`msg`), as the field's type says.
+- **Multiple** reads a list of tags in the order shown, with an optional data type and array size
+  per row. A Browse button on each row fills its tag.
+- **Multiple from msg** reads the tags from a message property, `msg.tags` by default: an array
+  of names, an array of `{ name, dataType, arraySize }` objects, or a comma separated string.
+
+A message property is only used when a field is set to `msg`, so `msg.tagName`, `msg.tags`,
+`msg.dataType` and `msg.arraySize` no longer override what the editor shows. Poll is hidden when
+a message supplies a value, since a poll tick has no message. A node saved before modes existed
+behaves as it did until it is edited and saved, and then follows these rules. After that, a message
+carrying `msg.tags` or `msg.arraySize` that the node is not set to read logs a warning once per
+deploy.
 
 On **cip-read**, the **Data Type** field controls decoding: `Auto-detect` returns
 scalars natively and expands whole arrays and UDT/STRUCT tags when the endpoint's
@@ -131,7 +147,7 @@ Hardware status:
 **Array lengths** are resolved in this order, and memoised until the connection is
 re-established, so a polled array costs one request per poll:
 
-1. `msg.arraySize`, if you set it.
+1. The **Array size** field, if you set it (`msg.arraySize` on a node saved before modes existed).
 2. The UDT template, for a member array such as `MyStruct.Member` — the controller
    sends the element count with the tag list.
 3. Symbol Object attribute 8 (array dimensions), for controller- and program-scoped
@@ -458,8 +474,8 @@ npm run sim:pf525
 }
 ```
 
-Batch read (`msg.tags`) — `payload` is an array in the order requested, and a tag that
-could not be read carries an `error` string instead of a value:
+Batch read (Multiple or Multiple from msg) — `payload` is an array in the order requested, and a tag the
+controller rejects carries an `error` string instead of a value while the others are still read:
 
 ```json
 {
@@ -471,6 +487,10 @@ could not be read carries an `error` string instead of a value:
   "timestamp": 1710000000000
 }
 ```
+
+An entry that is not valid (a number, an empty name, an object without a name, an `arraySize` that is not
+a positive whole number) fails the whole message before anything is read. The error lists each bad entry by
+position and a Catch node receives it.
 
 ### cip-write Input
 

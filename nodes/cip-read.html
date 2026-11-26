@@ -380,10 +380,30 @@
 <script type="text/html" data-help-name="cip-read">
   <p>Reads a tag value from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
   <h3>Inputs</h3>
-  <p>An incoming message triggers a read. Set <code>msg.tagName</code> to override the configured tag.</p>
-  <p>For batch reads, set <code>msg.tags</code> (see Batch Mode below). <code>msg.tags</code> wins over
-  the Tag Name field. Plain tags are read together in one operation; arrays and UDTs are read
-  individually, since they need their own element count or structure decoding.</p>
+  <p>An incoming message triggers a read. What is read depends on <b>Mode</b>. Each value comes from the
+  place its field names, and a message property is only used when a field is set to <code>msg</code>, so
+  nothing in the message overrides what the editor shows.</p>
+  <dl class="message-properties">
+    <dt>Single</dt>
+    <dd>One tag. <b>Tag Name</b> is a string, a message property or an environment variable.
+    <b>Data Type</b> is one of the options, a message property or an environment variable. <b>Array size</b>
+    is Auto, a number, a message property or an environment variable, and only applies when the data type
+    is ARRAY. A message property that is not set means Auto.</dd>
+    <dt>Multiple</dt>
+    <dd>A list of tags to read together, in the order shown. Each row has a tag (a string or an
+    environment variable), a data type (Auto, ARRAY or STRUCT) and, for ARRAY, a size. The message does not
+    change the list.</dd>
+    <dt>Multiple from msg</dt>
+    <dd>Reads the tags from a message property, <code>msg.tags</code> by default. See Multiple from msg below.</dd>
+  </dl>
+  <p>Plain tags are read together in one operation; arrays and UDTs are read individually, since they
+  need their own element count or structure decoding.</p>
+  <p><b>A node saved before modes existed</b> behaves as it always did, so <code>msg.tagName</code>,
+  <code>msg.tags</code>, <code>msg.dataType</code> and <code>msg.arraySize</code> still override the node.
+  Opening it in the editor shows it in Single mode with what it already has: its Data Type is kept, a
+  filled Tag Name becomes a string, an empty one reads <code>msg.tagName</code>, and a saved poll interval
+  is kept. Saving it turns the rules above on. After that the node logs a warning, once per deploy, if a
+  message carries <code>msg.tags</code> or <code>msg.arraySize</code> that it is not set to read.</p>
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload <span class="property-type">*</span></dt>
@@ -398,13 +418,16 @@
     <dd>Unix timestamp (ms) of the read.</dd>
   </dl>
   <h3>Details</h3>
-  <p>Set a poll interval (in milliseconds) for periodic reads, or leave at 0 for trigger-only mode.
+  <p><b>Poll</b> can be None (read when a message arrives), a number of milliseconds, or an environment
+  variable. A poll tick has no message, so Poll is hidden, and saved as None, whenever a message
+  supplies a value: Tag Name, Data Type or Array size set to <code>msg</code>, or Multiple from msg mode.
+  An interval that is not a positive whole number is reported by name and the node does not poll.
   Backpressure is applied: if a read is already in-flight, subsequent poll ticks are skipped.</p>
   <p><b>Data Type</b> controls how the tag value is decoded:
   <ul>
     <li><b>Auto-detect</b> — scalars as native values; arrays are read in full and UDT/STRUCT tags are expanded to objects, when the PLC tag list is available.</li>
     <li><b>STRUCT</b> — force UDT/structure decoding (requires tag list from the endpoint connection). An array of UDTs yields one object per element.</li>
-    <li><b>ARRAY</b> — read the full array. Override the length with <code>msg.arraySize</code>.</li>
+    <li><b>ARRAY</b> — read the full array. Set the length with <b>Array size</b>.</li>
   </ul>
   </p>
   <p><b>Values:</b> BOOL is a boolean. SINT, USINT, INT, UINT, DINT, UDINT, REAL, LREAL, BYTE and WORD are numbers.
@@ -418,8 +441,8 @@
   controller- or program-scoped array tag. If a controller does not answer that
   attribute, the length is found by a bisecting index probe. The result is cached until
   the connection is re-established, so polling an array costs one request per poll.</p>
-  <p>Click the <i class="fa fa-search"></i> button next to the tag name field to browse available tags
-  from the connected PLC. The endpoint must be deployed and connected first.</p>
+  <p>Click the <i class="fa fa-search"></i> button next to the tag name field, or on a row of the list, to
+  browse available tags from the connected PLC. The endpoint must be deployed and connected first.</p>
   <h3>Tag Addressing</h3>
   <ul>
     <li><b>Bit-level access:</b> Use dot notation to read individual bits, e.g. <code>MyDint.5</code> reads bit 5 of a DINT tag.</li>
@@ -429,7 +452,7 @@
     <li><b>Whole array:</b> Give the tag on its own, e.g. <code>MyArray</code> or <code>MyStruct.Member</code>, to read every element. An array of UDTs yields one object per element.
       This needs the PLC tag list, which ControlLogix and CompactLogix provide. Without one (a Micro800) the node cannot tell that a bare name is an array
       and returns element 0 only. There, read a range such as <code>MyArray[0..9]</code>, or set Data Type to <i>ARRAY</i> (the length is found automatically,
-      or set <code>msg.arraySize</code>). The write and subscribe nodes always treat a bare name as element 0, see their help.</li>
+      or set <b>Array size</b>). The write and subscribe nodes always treat a bare name as element 0, see their help.</li>
     <li><b>Strings:</b> Read the STRING tag itself, e.g. <code>Line1.LotName</code>, to get the
     text. Built-in and custom-length strings (STRING20 and so on) both return text.
     <code>.LEN</code> and <code>.DATA</code> are the tag's length and character array, so you
@@ -439,8 +462,9 @@
   <p>Tag paths are matched case-insensitively, the way Logix treats them:
   <code>mystruct.member</code> and <code>MyStruct.Member</code> address the same tag and
   both decode into an object.</p>
-  <h3>Batch Mode</h3>
-  <p>Send <code>msg.tags</code> to read several tags at once. It can be:</p>
+  <h3>Multiple from msg</h3>
+  <p>Reads the tags from the message property named in the <b>Tags</b> field, <code>msg.tags</code> by
+  default. It can be:</p>
   <ul>
     <li>an array of tag names, e.g. <code>["Tag1", "MyArray[0..9]"]</code></li>
     <li>an array of objects, <code>{ name, dataType, arraySize }</code>. <code>tagName</code> is accepted in place of
@@ -450,8 +474,7 @@
     <li>a comma separated string, e.g. <code>"Tag1, Tag2, Arr[1,2]"</code>. A comma inside square brackets stays
     part of the tag name.</li>
   </ul>
-  <p><code>msg.tags</code> wins over the Tag Name field, so a cip-read wired after a cip-subscribe reads the
-  subscribed tags and not its own.</p>
+  <p>A cip-read wired after a cip-subscribe can read the subscribed tags this way.</p>
   <p><code>msg.payload</code> is an array of <code>{ tagName, value, type }</code> objects in the
   order requested, so <code>payload[2]</code> is always the result for <code>tags[2]</code>. A tag the PLC
   rejects, such as one that does not exist, has an <code>error</code> string in place of its value and
