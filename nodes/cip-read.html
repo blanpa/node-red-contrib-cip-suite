@@ -5,23 +5,230 @@
     defaults: {
       name: { value: "" },
       endpoint: { value: "", type: "cip-endpoint", required: true },
+      mode: { value: "single" },
       tagName: { value: "" },
+      tagNameType: { value: "str" },
       dataType: { value: "auto" },
-      pollInterval: { value: 0 }
+      dataTypeType: { value: "dt" },
+      arraySize: { value: "" },
+      arraySizeType: { value: "auto" },
+      tagList: { value: [] },
+      tagsProp: { value: "tags" },
+      tagsPropType: { value: "msg" },
+      pollInterval: { value: 0 },
+      pollIntervalType: { value: "none" }
     },
     inputs: 1,
     outputs: 1,
     icon: "cip.svg",
     paletteLabel: "cip read",
     label: function () {
-      return this.name || this.tagName || "cip read";
+      if (this.name) {
+        return this.name;
+      }
+      if (this.mode === "multiple") {
+        var count = (this.tagList || []).length;
+        return count + (count === 1 ? " tag" : " tags");
+      }
+      if (this.mode === "multiple-msg") {
+        return "tags from msg." + (this.tagsProp || "tags");
+      }
+      if (this.mode === "single" && this.tagNameType === "msg") {
+        return "msg." + (this.tagName || "tagName");
+      }
+      return this.tagName || "cip read";
     },
     oneditprepare: function () {
+      var node = this;
+      // Nodes saved before modes existed have no mode. Node-RED does not fill in defaults
+      // for a property the saved node lacks, so undefined is how they are told apart.
+      var legacy = node.mode === undefined || node.mode === "";
+
+      var dataTypes = [
+        { value: "auto", label: "Auto-detect" },
+        { value: "BOOL", label: "BOOL" },
+        { value: "INT", label: "INT (16-bit)" },
+        { value: "DINT", label: "DINT (32-bit)" },
+        { value: "REAL", label: "REAL (float)" },
+        { value: "STRING", label: "STRING" },
+        { value: "STRUCT", label: "STRUCT (UDT)" },
+        { value: "ARRAY", label: "ARRAY" }
+      ];
+
+      var $mode = $("#node-input-mode");
+      var $tag = $("#node-input-tagName");
+      var $dataType = $("#node-input-dataType");
+      var $arraySize = $("#node-input-arraySize");
+      var $poll = $("#node-input-pollInterval");
+      var $tagsProp = $("#node-input-tagsProp");
+
+      /** A msg typed input starts on a useful property name instead of empty. */
+      function defaultOnMsg($input, property) {
+        $input.on("typedinputtypechange", function () {
+          if ($input.typedInput("type") === "msg" && !$input.typedInput("value")) {
+            $input.typedInput("value", property);
+          }
+        });
+      }
+
+      $tag.typedInput({ types: ["str", "msg", "env"], typeField: "#node-input-tagNameType", default: "str" });
+      $tag.typedInput("width", "100%");
+      defaultOnMsg($tag, "tagName");
+
+      $dataType.typedInput({
+        types: [{ value: "dt", label: "Data type", options: dataTypes }, "msg", "env"],
+        typeField: "#node-input-dataTypeType",
+        default: "dt"
+      });
+      $dataType.typedInput("width", "100%");
+      defaultOnMsg($dataType, "dataType");
+
+      $arraySize.typedInput({
+        types: [{ value: "auto", label: "Auto", hasValue: false }, "num", "msg", "env"],
+        typeField: "#node-input-arraySizeType",
+        default: "auto"
+      });
+      $arraySize.typedInput("width", "100%");
+      defaultOnMsg($arraySize, "arraySize");
+
+      $poll.typedInput({
+        types: [{ value: "none", label: "None", hasValue: false }, "num", "env"],
+        typeField: "#node-input-pollIntervalType",
+        default: "none"
+      });
+      $poll.typedInput("width", "100%");
+
+      $tagsProp.typedInput({ types: ["msg"], typeField: "#node-input-tagsPropType", default: "msg" });
+      $tagsProp.typedInput("width", "100%");
+
+      if (legacy) {
+        // Keep what the node already has. A blank tag was filled from the message, so it stays
+        // that way. Array size was only ever a hidden msg property and has nothing to carry.
+        $mode.val("single");
+        if (node.tagName) {
+          $tag.typedInput("type", "str");
+          $tag.typedInput("value", node.tagName);
+        } else {
+          $tag.typedInput("type", "msg");
+          $tag.typedInput("value", "tagName");
+        }
+        $dataType.typedInput("type", "dt");
+        $dataType.typedInput("value", node.dataType || "auto");
+        $arraySize.typedInput("type", "auto");
+        $tagsProp.typedInput("type", "msg");
+        $tagsProp.typedInput("value", "tags");
+        var interval = parseInt(node.pollInterval, 10);
+        if (interval > 0) {
+          $poll.typedInput("type", "num");
+          $poll.typedInput("value", interval);
+        } else {
+          $poll.typedInput("type", "none");
+        }
+      }
+
+      // Multiple: one row per tag
+      var $list = $("#node-input-tagList-container");
+      $list.css("min-height", "150px").editableList({
+        sortable: true,
+        removable: true,
+        addButton: "add tag",
+        addItem: function (row, index, data) {
+          data = data || {};
+          var line = $("<div/>", { style: "display:flex; gap:4px; align-items:center;" }).appendTo(row);
+          var tagBox = $("<div/>", { style: "flex:1; min-width:0;" }).appendTo(line);
+          var rowTag = $("<input/>", { type: "text", class: "cip-row-tag" }).appendTo(tagBox);
+          var rowType = $("<select/>", { class: "cip-row-datatype", style: "width:110px; margin:0;" }).appendTo(line);
+          [["auto", "Auto"], ["ARRAY", "ARRAY"], ["STRUCT", "STRUCT"]].forEach(function (o) {
+            rowType.append($("<option/>").val(o[0]).text(o[1]));
+          });
+          var rowSize = $("<input/>", {
+            type: "number",
+            min: 1,
+            class: "cip-row-arraysize",
+            placeholder: "size",
+            style: "width:70px; margin:0;"
+          }).appendTo(line);
+
+          rowTag.typedInput({ types: ["str", "env"], default: data.tagNameType || "str" });
+          rowTag.typedInput("width", "100%");
+          rowTag.typedInput("type", data.tagNameType || "str");
+          rowTag.typedInput("value", data.tagName || "");
+          rowType.val(data.dataType || "auto");
+          rowSize.val(data.arraySize === undefined || data.arraySize === null ? "" : data.arraySize);
+
+          function showSize() {
+            rowSize.toggle(rowType.val() === "ARRAY");
+          }
+          rowType.on("change", showSize);
+          showSize();
+        }
+      });
+      $list.editableList("addItems", node.tagList || []);
+
+      /** True when a message supplies a value, so there is nothing to read on a timer. */
+      function isDynamic() {
+        var mode = $mode.val();
+        if (mode === "multiple-msg") {
+          return true;
+        }
+        return (
+          mode === "single" &&
+          ($tag.typedInput("type") === "msg" ||
+            $dataType.typedInput("type") === "msg" ||
+            $arraySize.typedInput("type") === "msg")
+        );
+      }
+      node._isDynamic = isDynamic;
+
+      function refresh() {
+        var mode = $mode.val();
+        $(".cip-read-single").toggle(mode === "single");
+        $(".cip-read-multiple").toggle(mode === "multiple");
+        $(".cip-read-msg").toggle(mode === "multiple-msg");
+
+        // Array size only means something for ARRAY. A dynamic data type could be ARRAY.
+        var dataTypeKind = $dataType.typedInput("type");
+        var arrayPossible = dataTypeKind !== "dt" || $dataType.typedInput("value") === "ARRAY";
+        $("#cip-read-arraysize-row").toggle(mode === "single" && arrayPossible);
+
+        $("#cip-read-poll-row").toggle(!isDynamic());
+      }
+
+      $mode.on("change", refresh);
+      [$tag, $dataType, $arraySize].forEach(function ($input) {
+        $input.on("typedinputtypechange change", refresh);
+      });
+      refresh();
+
       // Guarded, see the note on setupTagBrowse in cip-endpoint.html.
       if (window.cipSuiteEditor) {
         window.cipSuiteEditor.setupTagBrowse();
       } else {
         console.warn("cip-suite: tag browse unavailable, cip-endpoint's editor script did not load");
+      }
+    },
+    oneditsave: function () {
+      var node = this;
+
+      var rows = [];
+      $("#node-input-tagList-container")
+        .editableList("items")
+        .each(function () {
+          var row = $(this);
+          var tagInput = row.find(".cip-row-tag");
+          var dataType = row.find(".cip-row-datatype").val();
+          rows.push({
+            tagName: tagInput.typedInput("value"),
+            tagNameType: tagInput.typedInput("type"),
+            dataType: dataType,
+            arraySize: dataType === "ARRAY" ? row.find(".cip-row-arraysize").val() : ""
+          });
+        });
+      node.tagList = rows;
+
+      // The Poll field is hidden when a message supplies a value, so save it as None.
+      if (node._isDynamic && node._isDynamic()) {
+        $("#node-input-pollInterval").typedInput("type", "none");
       }
     }
   });
@@ -37,36 +244,90 @@
     <input type="text" id="node-input-endpoint" />
   </div>
   <div class="form-row">
-    <label for="node-input-tagName"><i class="fa fa-bookmark"></i> Tag Name</label>
-    <div style="display:flex; gap:4px;">
-      <input type="text" id="node-input-tagName" placeholder="Program:MainProgram.MyTag" style="flex:1" />
-      <button type="button" id="node-input-browse-btn" class="red-ui-button" title="Browse tags from PLC">
-        <i class="fa fa-search"></i>
-      </button>
-    </div>
-  </div>
-  <div class="form-row" id="node-input-taglist-row" style="display:none;">
-    <label><i class="fa fa-list"></i> Tags</label>
-    <select id="node-input-taglist" size="8" style="width:70%; font-family:monospace;"></select>
-  </div>
-  <div class="form-row">
-    <label for="node-input-dataType"><i class="fa fa-database"></i> Data Type</label>
-    <select id="node-input-dataType">
-      <option value="auto">Auto-detect</option>
-      <option value="BOOL">BOOL</option>
-      <option value="INT">INT (16-bit)</option>
-      <option value="DINT">DINT (32-bit)</option>
-      <option value="REAL">REAL (float)</option>
-      <option value="STRING">STRING</option>
-      <option value="STRUCT">STRUCT (UDT)</option>
-      <option value="ARRAY">ARRAY</option>
+    <label for="node-input-mode"><i class="fa fa-list-alt"></i> Mode</label>
+    <select id="node-input-mode" style="width:70%">
+      <option value="single">Single</option>
+      <option value="multiple">Multiple</option>
+      <option value="multiple-msg">Multiple from msg</option>
     </select>
   </div>
-  <div class="form-row">
+
+  <div class="cip-read-single">
+    <div class="form-row">
+      <label for="node-input-tagName"><i class="fa fa-bookmark"></i> Tag Name</label>
+      <div style="display:inline-flex; gap:4px; width:70%; vertical-align:middle;">
+        <div style="flex:1; min-width:0;">
+          <input type="text" id="node-input-tagName" placeholder="Program:MainProgram.MyTag" />
+          <input type="hidden" id="node-input-tagNameType" />
+        </div>
+        <button type="button" id="node-input-browse-btn" class="red-ui-button" title="Browse tags from PLC">
+          <i class="fa fa-search"></i>
+        </button>
+      </div>
+    </div>
+    <div class="form-row" id="node-input-taglist-row" style="display:none;">
+      <label><i class="fa fa-list"></i> Tags</label>
+      <select id="node-input-taglist" size="8" style="width:70%; font-family:monospace;"></select>
+    </div>
+    <div class="form-row">
+      <label for="node-input-dataType"><i class="fa fa-database"></i> Data Type</label>
+      <div style="display:inline-block; width:70%; vertical-align:middle;">
+        <input type="text" id="node-input-dataType" />
+        <input type="hidden" id="node-input-dataTypeType" />
+      </div>
+    </div>
+    <div class="form-row" id="cip-read-arraysize-row">
+      <label for="node-input-arraySize"><i class="fa fa-th"></i> Array size</label>
+      <div style="display:inline-block; width:70%; vertical-align:middle;">
+        <input type="text" id="node-input-arraySize" />
+        <input type="hidden" id="node-input-arraySizeType" />
+      </div>
+      <div class="cip-read-tip">Optional. Only used when the data type is ARRAY. Auto finds the length.</div>
+    </div>
+  </div>
+
+  <div class="cip-read-multiple">
+    <div class="form-row" style="margin-bottom:0;">
+      <label><i class="fa fa-list"></i> Tags</label>
+    </div>
+    <div class="form-row">
+      <ol id="node-input-tagList-container"></ol>
+      <div class="cip-read-tip cip-read-tip-wide">One result per row, in this order. Size is only used for ARRAY.</div>
+    </div>
+  </div>
+
+  <div class="cip-read-msg">
+    <div class="form-row">
+      <label for="node-input-tagsProp"><i class="fa fa-bookmark"></i> Tags</label>
+      <div style="display:inline-block; width:70%; vertical-align:middle;">
+        <input type="text" id="node-input-tagsProp" />
+        <input type="hidden" id="node-input-tagsPropType" />
+      </div>
+      <div class="cip-read-tip">An array of tag names or { name, dataType, arraySize } objects, or a comma separated string. See Batch Mode in the help.</div>
+    </div>
+  </div>
+
+  <div class="form-row" id="cip-read-poll-row">
     <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
-    <input type="number" id="node-input-pollInterval" placeholder="0 = trigger only" />
+    <div style="display:inline-block; width:70%; vertical-align:middle;">
+      <input type="text" id="node-input-pollInterval" />
+      <input type="hidden" id="node-input-pollIntervalType" />
+    </div>
   </div>
 </script>
+
+<style>
+  /* A long tip must wrap inside its row. Without contain, it sizes the edit tray to its text. */
+  .cip-read-tip {
+    margin: 4px 0 0 105px;
+    font-size: 12px;
+    opacity: 0.75;
+    contain: inline-size;
+  }
+  .cip-read-tip-wide {
+    margin-left: 0;
+  }
+</style>
 
 <script type="text/html" data-help-name="cip-read">
   <p>Reads a tag value from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>

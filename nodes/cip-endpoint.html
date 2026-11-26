@@ -155,6 +155,14 @@
           return;
         }
         $name.val(name);
+        // A typed input keeps its own copy of the value and shows a picked tag as a str.
+        // On a plain input this throws, and the line above has already done the work.
+        try {
+          $name.typedInput("type", "str");
+          $name.typedInput("value", name);
+        } catch (e) {
+          /* not a typed input */
+        }
         if (collapse) {
           $row.slideUp(200);
         }
