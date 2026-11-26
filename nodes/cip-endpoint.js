@@ -862,7 +862,7 @@ module.exports = function (RED) {
             const tagList = node.plc.tagList || [];
             const tags = tagList.map((t) => ({
                 name: t.name,
-                type: t.type && t.type.typeName ? t.type.typeName : String(t.type || ""),
+                type: (0, utils_1.describeTagType)(t.type),
                 program: t.program || null,
             }));
             tags.sort((a, b) => a.name.localeCompare(b.name));

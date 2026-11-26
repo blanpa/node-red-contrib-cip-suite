@@ -338,6 +338,24 @@ export function cipTypeName(code: number): string {
 }
 
 /**
+ * The name of a tag list entry's type, for showing in a list.
+ *
+ * st-ethernet-ip gives `type` as an object whose `typeName` is null for a code it has no name
+ * for (and no UDT template either), so reading it with String() printed "[object Object]".
+ * Falls back to our own name for the code, then to the code in hex.
+ */
+export function describeTagType(type: any): string {
+  if (type === null || type === undefined) return "";
+  if (typeof type === "string") return type;
+  if (typeof type === "number") return cipTypeName(type);
+  if (typeof type === "object") {
+    if (typeof type.typeName === "string" && type.typeName) return type.typeName;
+    if (typeof type.code === "number") return cipTypeName(type.code);
+  }
+  return "";
+}
+
+/**
  * Render whatever st-ethernet-ip threw as readable text.
  *
  * The library rejects a failed connect with a bare object such as

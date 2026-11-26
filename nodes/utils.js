@@ -17,6 +17,7 @@ exports.setBit = setBit;
 exports.buildBitMasks = buildBitMasks;
 exports.cipStatusText = cipStatusText;
 exports.cipTypeName = cipTypeName;
+exports.describeTagType = describeTagType;
 exports.describeCipError = describeCipError;
 exports.toCipError = toCipError;
 exports.cipErrorFields = cipErrorFields;
@@ -275,6 +276,28 @@ function cipStatusText(code) {
  */
 function cipTypeName(code) {
     return types_1.CIP_TYPE_NAMES[code] || `0x${code.toString(16)}`;
+}
+/**
+ * The name of a tag list entry's type, for showing in a list.
+ *
+ * st-ethernet-ip gives `type` as an object whose `typeName` is null for a code it has no name
+ * for (and no UDT template either), so reading it with String() printed "[object Object]".
+ * Falls back to our own name for the code, then to the code in hex.
+ */
+function describeTagType(type) {
+    if (type === null || type === undefined)
+        return "";
+    if (typeof type === "string")
+        return type;
+    if (typeof type === "number")
+        return cipTypeName(type);
+    if (typeof type === "object") {
+        if (typeof type.typeName === "string" && type.typeName)
+            return type.typeName;
+        if (typeof type.code === "number")
+            return cipTypeName(type.code);
+    }
+    return "";
 }
 /**
  * Render whatever st-ethernet-ip threw as readable text.

@@ -19,7 +19,7 @@ import {
   CIPClass,
   CIP_TYPE_NAMES,
 } from "./types";
-import { withTiming, cipTypeName, toCipError, guardReplyHandlers, describeCipError } from "./utils";
+import { withTiming, cipTypeName, toCipError, guardReplyHandlers, describeCipError, describeTagType } from "./utils";
 import { connectOnPort, connectedPort, DEFAULT_EIP_PORT } from "./eip-port";
 
 const { Controller } = require("st-ethernet-ip");
@@ -922,7 +922,7 @@ module.exports = function (RED: any) {
       const tagList = node.plc.tagList || [];
       const tags = tagList.map((t: any) => ({
         name: t.name,
-        type: t.type && t.type.typeName ? t.type.typeName : String(t.type || ""),
+        type: describeTagType(t.type),
         program: t.program || null,
       }));
       tags.sort((a: any, b: any) => a.name.localeCompare(b.name));
