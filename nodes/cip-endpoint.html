@@ -108,13 +108,31 @@
       var $status = $("#node-input-browse-status");
       var $name = $("#node-input-tagName");
 
-      $btn.on("click", function () {
+      // Where a picked tag goes. The Browse button that loaded the list sets it, so one
+      // list serves the Tag Name field and any number of per-row buttons.
+      var pick = null;
+
+      var fillName = function (name) {
+        $name.val(name);
+        // A typed input keeps its own copy of the value and shows a picked tag as a str.
+        // On a plain input this throws, and the line above has already done the work.
+        try {
+          $name.typedInput("type", "str");
+          $name.typedInput("value", name);
+        } catch (e) {
+          /* not a typed input */
+        }
+      };
+
+      /** Load the controller's tags into the list. `onPick(name)` receives the chosen tag. */
+      var load = function ($button, onPick) {
         var endpointId = $("#node-input-endpoint").val();
         if (!endpointId || endpointId === "_ADD_") {
           RED.notify("Select and deploy an endpoint first.", "warning");
           return;
         }
-        $btn.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
+        pick = onPick;
+        $button.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
         $status.text("Loading...");
         $.getJSON("cip-endpoint/" + endpointId + "/browse")
           .done(function (tags) {
@@ -140,29 +158,21 @@
             $status.text("");
           })
           .always(function () {
-            $btn.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
+            $button.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
           });
-      });
+      };
 
-      // cip-browse lists tags as its own output and has no field to fill.
-      if (!$name.length) {
-        return;
-      }
+      // cip-browse lists tags as its own output and has no field to fill, so it picks nothing.
+      $btn.on("click", function () {
+        load($btn, $name.length ? fillName : null);
+      });
 
       var apply = function (collapse) {
         var name = $sel.val();
-        if (!name) {
+        if (!name || !pick) {
           return;
         }
-        $name.val(name);
-        // A typed input keeps its own copy of the value and shows a picked tag as a str.
-        // On a plain input this throws, and the line above has already done the work.
-        try {
-          $name.typedInput("type", "str");
-          $name.typedInput("value", name);
-        } catch (e) {
-          /* not a typed input */
-        }
+        pick(name);
         if (collapse) {
           $row.slideUp(200);
         }
@@ -173,6 +183,9 @@
       $sel.on("dblclick", function () {
         apply(true);
       });
+
+      // For a node with its own Browse buttons, such as one per row of a list.
+      return { browse: load };
     };
   })();
 </script>
