@@ -280,8 +280,8 @@
   <div class="cip-read-single">
     <div class="form-row">
       <label for="node-input-tagName"><i class="fa fa-bookmark"></i> Tag Name</label>
-      <div style="display:inline-flex; gap:4px; width:70%; vertical-align:middle;">
-        <div style="flex:1; min-width:0;">
+      <div class="cip-read-field cip-read-field-browse">
+        <div class="cip-read-field-typed">
           <input type="text" id="node-input-tagName" placeholder="Program:MainProgram.MyTag" />
           <input type="hidden" id="node-input-tagNameType" />
         </div>
@@ -292,18 +292,18 @@
     </div>
     <div class="form-row">
       <label for="node-input-dataType"><i class="fa fa-database"></i> Data Type</label>
-      <div style="display:inline-block; width:70%; vertical-align:middle;">
+      <div class="cip-read-field">
         <input type="text" id="node-input-dataType" />
         <input type="hidden" id="node-input-dataTypeType" />
       </div>
     </div>
     <div class="form-row" id="cip-read-arraysize-row">
       <label for="node-input-arraySize"><i class="fa fa-th"></i> Array size</label>
-      <div style="display:inline-block; width:70%; vertical-align:middle;">
+      <div class="cip-read-field">
         <input type="text" id="node-input-arraySize" />
         <input type="hidden" id="node-input-arraySizeType" />
       </div>
-      <div class="cip-read-tip">Optional. Only used when the data type is ARRAY. Auto finds the length.</div>
+      <div class="form-tips cip-read-tip">Optional. Only used when the data type is ARRAY. Auto finds the length.</div>
     </div>
   </div>
 
@@ -313,7 +313,7 @@
     </div>
     <div class="form-row">
       <ol id="node-input-tagList-container"></ol>
-      <div class="cip-read-tip cip-read-tip-wide">One result per row, in this order. Size is only used for ARRAY.</div>
+      <div class="form-tips cip-read-tip cip-read-tip-wide">One result per row, in this order. Size is only used for ARRAY.</div>
     </div>
   </div>
 
@@ -325,17 +325,17 @@
   <div class="cip-read-msg">
     <div class="form-row">
       <label for="node-input-tagsProp"><i class="fa fa-bookmark"></i> Tags</label>
-      <div style="display:inline-block; width:70%; vertical-align:middle;">
+      <div class="cip-read-field">
         <input type="text" id="node-input-tagsProp" />
         <input type="hidden" id="node-input-tagsPropType" />
       </div>
-      <div class="cip-read-tip">An array of tag names or { name, dataType, arraySize } objects, or a comma separated string. See Batch Mode in the help.</div>
+      <div class="form-tips cip-read-tip">An array of tag names or { name, dataType, arraySize } objects, or a comma separated string. See Batch Mode in the help.</div>
     </div>
   </div>
 
   <div class="form-row" id="cip-read-poll-row">
     <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
-    <div style="display:inline-block; width:70%; vertical-align:middle;">
+    <div class="cip-read-field">
       <input type="text" id="node-input-pollInterval" />
       <input type="hidden" id="node-input-pollIntervalType" />
     </div>
@@ -343,14 +343,36 @@
 </script>
 
 <style>
-  /* A long tip must wrap inside its row. Without contain, it sizes the edit tray to its text. */
-  .cip-read-tip {
-    margin: 4px 0 0 105px;
-    font-size: 12px;
-    opacity: 0.75;
-    contain: inline-size;
+  /* Stock fields are 70% wide after a 100px label. Match that so every control ends at the
+     same edge at any tray width. A typed input sizes itself from its element when it is built
+     and comes out narrower than its wrapper, so its container is pinned to the wrapper. */
+  .cip-read-field {
+    display: inline-block;
+    width: 70%;
+    vertical-align: middle;
   }
-  .cip-read-tip-wide {
+  .cip-read-field .red-ui-typedInput-container,
+  #node-input-tagList-container .red-ui-typedInput-container {
+    width: 100% !important;
+  }
+  /* With a Browse button the typed input and the button share the 70%. */
+  .cip-read-field-browse {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .cip-read-field-typed {
+    flex: 1;
+    min-width: 0;
+  }
+  /* A tip wraps inside its row. contain stops its text from setting the minimum width of the
+     edit tray, and overflow-wrap breaks a long unbroken word instead of overflowing. */
+  #dialog-form .form-tips.cip-read-tip {
+    margin: 4px 0 0 104px;
+    contain: inline-size;
+    overflow-wrap: anywhere;
+  }
+  #dialog-form .form-tips.cip-read-tip-wide {
     margin-left: 0;
   }
 </style>
