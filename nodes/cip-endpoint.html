@@ -124,7 +124,125 @@
         }
       };
 
-      /** Load the controller's tags into the list. `onPick(name)` receives the chosen tag. */
+      // A dialog with no inline tag list gets a dropdown under the Browse button instead.
+      var inline = $sel.length > 0;
+      var MAX_SHOWN = 300;
+      var $pop = null;
+
+      var closePop = function () {
+        if ($pop) {
+          $pop.remove();
+          $pop = null;
+        }
+        $(document).off(".cipTagPop");
+      };
+
+      /** Drop a filterable list of tags under `$anchor`. Choosing one calls `onPick(name)`. */
+      var showPop = function ($anchor, tags, onPick) {
+        closePop();
+        // Inside the tray, so it goes when the dialog does and is not clipped by the form.
+        var $host = $anchor.closest(".red-ui-tray");
+        $pop = $("<div/>", { class: "cip-tag-pop" }).appendTo($host.length ? $host : $(document.body));
+        var $filter = $("<input/>", { type: "text", class: "cip-tag-pop-filter", placeholder: "Filter " + tags.length + " tags" }).appendTo($pop);
+        var $list = $("<ul/>", { class: "cip-tag-pop-list" }).appendTo($pop);
+        var $note = $("<div/>", { class: "cip-tag-pop-note" }).appendTo($pop);
+        var rows = [];
+        var active = -1;
+
+        var setActive = function (index) {
+          $list.children(".active").removeClass("active");
+          active = rows.length ? Math.max(0, Math.min(index, rows.length - 1)) : -1;
+          if (active >= 0) {
+            var li = $list.children().eq(active).addClass("active")[0];
+            if (li && li.scrollIntoView) {
+              li.scrollIntoView({ block: "nearest" });
+            }
+          }
+        };
+        var choose = function (name) {
+          closePop();
+          if (onPick) {
+            onPick(name);
+          }
+        };
+        var render = function () {
+          var q = $.trim($filter.val()).toLowerCase();
+          var matches = tags.filter(function (t) {
+            return !q || t.name.toLowerCase().indexOf(q) !== -1;
+          });
+          rows = matches.slice(0, MAX_SHOWN);
+          $list.empty();
+          rows.forEach(function (t) {
+            // The type helps you pick a tag and is never part of the value. A controller
+            // reports types the Data Type list does not offer (SINT, LINT, LREAL, UDT
+            // template names), so it stays advisory.
+            var $li = $("<li/>").data("name", t.name).appendTo($list);
+            $("<span/>", { class: "cip-tag-pop-name" }).text(t.name).appendTo($li);
+            if (t.type) {
+              $("<span/>", { class: "cip-tag-pop-type" }).text(t.type).appendTo($li);
+            }
+          });
+          $note
+            .text(
+              !matches.length
+                ? tags.length
+                  ? "No tags match"
+                  : "No tags found"
+                : matches.length > MAX_SHOWN
+                  ? "Showing " + MAX_SHOWN + " of " + matches.length + ". Type to narrow."
+                  : ""
+            )
+            .toggle(!rows.length || matches.length > MAX_SHOWN);
+          setActive(0);
+        };
+
+        $list.on("mousedown", "li", function (e) {
+          e.preventDefault();
+          choose($(this).data("name"));
+        });
+        $filter.on("input", render);
+        $filter.on("keydown", function (e) {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive(active + (e.key === "ArrowDown" ? 1 : -1));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (active >= 0) {
+              choose(rows[active].name);
+            }
+          } else if (e.key === "Escape") {
+            // Only close the dropdown, not the edit dialog behind it.
+            e.preventDefault();
+            e.stopPropagation();
+            closePop();
+          }
+        });
+        $(document).on("mousedown.cipTagPop", function (e) {
+          if (!$pop || !$.contains(document.documentElement, $pop[0])) {
+            closePop();
+          } else if (!$(e.target).closest($pop).length && !$(e.target).closest($anchor).length) {
+            closePop();
+          }
+        });
+
+        // Under the button with its right edge on the button's, since the button sits at the
+        // right of its field, and kept inside the tray. Above it when there is no room below.
+        var a = $anchor[0].getBoundingClientRect();
+        var bounds = $host.length ? $host[0].getBoundingClientRect() : { left: 0, right: window.innerWidth };
+        var width = Math.min(360, bounds.right - bounds.left - 12);
+        $pop.css({ width: width, left: Math.max(bounds.left + 6, Math.min(a.right - width, bounds.right - width - 6)) });
+        var below = window.innerHeight - a.bottom;
+        var need = Math.min(340, $pop.outerHeight());
+        if (below < need + 12 && a.top > below) {
+          $pop.css({ bottom: window.innerHeight - a.top + 2, top: "auto" });
+        } else {
+          $pop.css({ top: a.bottom + 2 });
+        }
+        render();
+        $filter.trigger("focus");
+      };
+
+      /** Load the controller's tags. `onPick(name)` receives the chosen tag. */
       var load = function ($button, onPick) {
         var endpointId = $("#node-input-endpoint").val();
         if (!endpointId || endpointId === "_ADD_") {
@@ -132,10 +250,15 @@
           return;
         }
         pick = onPick;
+        closePop();
         $button.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
         $status.text("Loading...");
         $.getJSON("cip-endpoint/" + endpointId + "/browse")
           .done(function (tags) {
+            if (!inline) {
+              showPop($button, tags, onPick);
+              return;
+            }
             $sel.empty();
             if (!tags.length) {
               $sel.append('<option disabled>No tags found</option>');
@@ -191,6 +314,58 @@
 </script>
 
 <style>
+  /* The tag dropdown under a Browse button, see setupTagBrowse(). It is fixed to the
+     viewport and sits inside the edit tray, so the form's overflow does not clip it. */
+  .cip-tag-pop {
+    position: fixed;
+    z-index: 20;
+    box-sizing: border-box;
+    padding: 6px;
+    background: var(--red-ui-secondary-background, #fff);
+    border: 1px solid var(--red-ui-primary-border-color, #bbb);
+    border-radius: 4px;
+    box-shadow: 0 4px 14px var(--red-ui-shadow, rgba(0, 0, 0, 0.25));
+  }
+  .cip-tag-pop .cip-tag-pop-filter {
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0 0 6px 0;
+  }
+  .cip-tag-pop-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .cip-tag-pop-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 6px;
+    cursor: pointer;
+    font-family: var(--red-ui-monospace-font, monospace);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .cip-tag-pop-list li:hover,
+  .cip-tag-pop-list li.active {
+    background: var(--red-ui-list-item-background-hover, #e6e6e6);
+  }
+  .cip-tag-pop-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cip-tag-pop-type {
+    flex: none;
+    opacity: 0.6;
+  }
+  .cip-tag-pop-note {
+    padding: 4px 6px 0;
+    font-size: 12px;
+    opacity: 0.7;
+  }
+
   /* The labels are too long and wrap poorly! */
   .form-row.form-row-130 label {
     width: 130px;

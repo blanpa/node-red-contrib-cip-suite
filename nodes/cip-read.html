@@ -222,11 +222,7 @@
         $("#cip-read-poll-row").toggle(!isDynamic());
       }
 
-      $mode.on("change", function () {
-        // The list was loaded for the previous mode's field.
-        $("#node-input-taglist-row").hide();
-        refresh();
-      });
+      $mode.on("change", refresh);
       [$tag, $dataType, $arraySize].forEach(function ($input) {
         $input.on("typedinputtypechange change", refresh);
       });
@@ -315,11 +311,6 @@
       <ol id="node-input-tagList-container"></ol>
       <div class="form-tips cip-read-tip cip-read-tip-wide">One result per row, in this order. Size is only used for ARRAY.</div>
     </div>
-  </div>
-
-  <div class="form-row" id="node-input-taglist-row" style="display:none;">
-    <label><i class="fa fa-list"></i> Tags</label>
-    <select id="node-input-taglist" size="8" style="width:70%; font-family:monospace;"></select>
   </div>
 
   <div class="cip-read-msg">
