@@ -28,6 +28,15 @@
   before anything is written, so a bad message writes nothing. The output is the result of the write (one tag),
   Key Result pairs (`{ alias: result }`) or an array of results with the alias beside each, where a failed
   tag does not stop the others. The Key Result pairs of a cip-read can be written as they are.
+- **cip-subscribe** - **Upgrade**, as for cip-read. **Mode** is UI (a list of tags, each with an optional
+  alias and its own Browse button) or Dynamic (the tags come from a message property, `msg.tags` by default,
+  and each message replaces the list and restarts the scan). **Output** is Value (one tag), Key Value pairs
+  (keyed by alias, else the tag as written), Key Result pairs or Array of results, and each `msg.tags` entry
+  carries its alias. **Scan** is a
+  number or an environment variable, **Deadband** is None (the default, the same as 0), a number or an
+  environment variable. After an upgrade `msg.scanRate` no longer changes the scan rate, and `msg.tags` only
+  counts in Dynamic mode. A message carrying one the node does not read logs a warning once per deploy. A tag
+  list, scan rate or deadband that is not usable is reported at deploy and the node does not scan.
 
 ## 0.2.3 — 2026-11-24
 

@@ -589,6 +589,17 @@ Only** on, `tags` lists only the tags that changed, while `payload` holds every 
 }
 ```
 
+**Output** is **Value** (one tag), **Key Value pairs** (as above, keyed by the row's alias or else the tag
+exactly as written), **Key Result pairs** (`{ key: { tagName, value, type, changed } }`) or **Array of
+results** (`{ alias, tagName, value, type, changed }` for every tag). An alias is carried in each `tags` entry. The `tags` entries are the shape a cip-read (**Dynamic**) and a
+cip-write (**Dynamic**) take, so wiring this node to one of them reads, or mirrors, the tags that changed.
+
+**Mode** is **UI** (a list of tags, each a string or an environment variable, with an optional alias) or
+**Dynamic** (the tags come from `msg.tags`, or another property, and each message replaces the list).
+**Scan** is a number or an environment variable and **Deadband** is None, a number or an environment
+variable. A node saved before this version keeps its old behaviour (`msg.tags` and `msg.scanRate`
+replace the tags and the scan rate) until it is upgraded in the editor.
+
 ### cip-raw Input
 
 ```json

@@ -5,6 +5,16 @@
     defaults: {
       name: { value: "" },
       endpoint: { value: "", type: "cip-endpoint", required: true },
+      // Only set once the node has been upgraded. A node saved before that has none of these
+      // (Node-RED does not fill in defaults for a property the saved node lacks), and a node
+      // without a mode runs exactly as it always did.
+      mode: { value: "ui" },
+      tagList: { value: [] },
+      tagsProp: { value: "tags" },
+      output: { value: "value" },
+      scanRateType: { value: "num" },
+      deadbandType: { value: "none" },
+      // Kept for nodes that have not been upgraded
       tags: { value: "" },
       scanRate: { value: 1000 },
       deadband: { value: 0 },
@@ -15,7 +25,282 @@
     icon: "cip.svg",
     paletteLabel: "cip subscribe",
     label: function () {
-      return this.name || "subscribe";
+      if (this.name) {
+        return this.name;
+      }
+      if (this.mode === undefined || this.mode === "") {
+        return "subscribe";
+      }
+      if (this.mode === "dynamic") {
+        return "tags from msg." + (this.tagsProp || "tags");
+      }
+      var rows = this.tagList || [];
+      if (rows.length === 1) {
+        var only = rows[0] || {};
+        return only.alias || only.tagName || "subscribe";
+      }
+      return rows.length + " tags";
+    },
+    oneditprepare: function () {
+      var node = this;
+      var ns = window.cipSuiteEditor;
+      // Nodes that have not been upgraded have no mode.
+      var upgraded = !(node.mode === undefined || node.mode === "");
+
+      var $mode = $("#cip-sub-mode");
+      var $output = $("#cip-sub-output");
+      var $list = $("#cip-sub-list");
+      var $tagsProp = $("#cip-sub-tagsprop");
+      var $scanRate = $("#cip-sub-scanrate");
+      var $deadband = $("#cip-sub-deadband");
+
+      var scanTypes = ["num"];
+      var upgradedScanTypes = ["num", "env"];
+      var bandTypes = [{ value: "none", label: "None", hasValue: false }, "num"];
+      var upgradedBandTypes = bandTypes.concat(["env"]);
+
+      ns.typed($tagsProp, { types: ["msg"], default: "msg" });
+      ns.typed($scanRate, { types: upgraded ? upgradedScanTypes : scanTypes, default: "num" });
+      ns.typed($deadband, { types: upgraded ? upgradedBandTypes : bandTypes, default: "none" });
+
+      /** The tags of a comma separated (or JSON array) text. A comma inside brackets stays in the name. */
+      function parseTags(text) {
+        text = String(text === undefined || text === null ? "" : text).trim();
+        if (!text) {
+          return [];
+        }
+        if (text.charAt(0) === "[") {
+          try {
+            var arr = JSON.parse(text);
+            if (Array.isArray(arr)) {
+              return arr
+                .map(function (t) {
+                  return String(t === null || t === undefined ? "" : t).trim();
+                })
+                .filter(Boolean);
+            }
+          } catch (e) {
+            /* not JSON, so it is a name such as "Arr[1,2]" */
+          }
+        }
+        var out = [];
+        var depth = 0;
+        var cur = "";
+        for (var i = 0; i < text.length; i++) {
+          var c = text.charAt(i);
+          if (c === "[") {
+            depth++;
+          } else if (c === "]") {
+            depth = Math.max(0, depth - 1);
+          }
+          if (c === "," && depth === 0) {
+            out.push(cur.trim());
+            cur = "";
+          } else {
+            cur += c;
+          }
+        }
+        out.push(cur.trim());
+        return out.filter(Boolean);
+      }
+
+      var rows;
+      if (upgraded) {
+        $mode.val(node.mode);
+        $output.val(node.output || "keyvalue");
+        $tagsProp.typedInput("value", node.tagsProp || "tags");
+        $scanRate.typedInput("type", node.scanRateType || "num");
+        $scanRate.typedInput("value", node.scanRate === undefined ? 1000 : node.scanRate);
+        $deadband.typedInput("type", node.deadbandType || "none");
+        if ((node.deadbandType || "none") !== "none") {
+          $deadband.typedInput("value", node.deadband);
+        }
+        rows = node.tagList && node.tagList.length ? node.tagList : [{}];
+      } else {
+        // What the node already has: the text becomes the rows, the scan rate stays, and a
+        // deadband only if one was set.
+        $mode.val("ui");
+        $output.val("keyvalue");
+        $tagsProp.typedInput("value", "tags");
+        $scanRate.typedInput("type", "num");
+        $scanRate.typedInput("value", parseInt(node.scanRate, 10) > 0 ? parseInt(node.scanRate, 10) : 1000);
+        var band = parseFloat(node.deadband);
+        if (band > 0) {
+          $deadband.typedInput("type", "num");
+          $deadband.typedInput("value", band);
+        } else {
+          $deadband.typedInput("type", "none");
+        }
+        rows = parseTags(node.tags).map(function (name) {
+          return { tagName: name, tagNameType: "str" };
+        });
+        if (rows.length === 0) {
+          rows = [{}];
+        }
+      }
+
+      var browser = ns.setupTagBrowse();
+
+      ns.setupList(node, $list, {
+        items: rows,
+        addItem: function (row, data) {
+          var line = $("<div/>", { style: "display:flex; gap:4px; align-items:center;" }).appendTo(row);
+          var rowAlias = $("<input/>", {
+            type: "text",
+            class: "cip-row-alias",
+            placeholder: "alias",
+            title: "Alias (optional): the key of the tag in the result",
+            style: "flex:0 1 90px; width:90px; min-width:40px; margin:0; box-sizing:border-box;"
+          }).appendTo(line);
+          var tagBox = $("<div/>", { class: "cip-row-tagbox", style: "flex:1 1 120px; min-width:60px;" }).appendTo(line);
+          var rowTag = $("<input/>", { type: "text", class: "cip-row-tag" }).appendTo(tagBox);
+          var rowBrowse = $("<button/>", {
+            type: "button",
+            class: "red-ui-button cip-row-browse",
+            title: "Browse tags from PLC",
+            style: "margin:0; flex:0 0 auto;"
+          })
+            .append('<i class="fa fa-search"></i>')
+            .appendTo(line);
+
+          ns.rowTag(browser, rowTag, rowBrowse, data);
+          rowAlias.val(data.alias || "");
+          return rowAlias;
+        }
+      });
+
+      function rowCount() {
+        return $list.editableList("length");
+      }
+      function dynamic() {
+        return $mode.val() === "dynamic";
+      }
+      var OUTPUT_TIPS = {
+        legacy: "Legacy output: the value for one tag, an object of values keyed by tag name for several. Upgrade to choose.",
+        value:
+          "payload is the value of the tag. msg.tagName, msg.dataType and msg.changed say which tag, its type and whether it changed.",
+        keyvalue:
+          "payload is { key: value } for every tag, the key being the alias or the tag as written. msg.tags lists each tag with its type and whether it changed.",
+        keyresult:
+          "payload is { key: { tagName, value, type, changed } } for every tag. msg.tags lists each tag with its type and whether it changed.",
+        array:
+          "payload is an array of { alias, tagName, value, type, changed }, one per tag. msg.tags lists each tag with its type and whether it changed."
+      };
+      function syncOutput() {
+        var canValue = !dynamic() && rowCount() === 1;
+        $output.find("option[value=value]").prop("disabled", !canValue);
+        // The native value: jQuery's val() skips a disabled option and would say there is none
+        if (!canValue && $output[0].value === "value") {
+          $output.val("keyvalue");
+        }
+        $("#cip-sub-output-tip").text(OUTPUT_TIPS[$output[0].value] || "");
+      }
+      function refresh() {
+        var isDynamic = dynamic();
+        $(".cip-multiple").toggle(!isDynamic);
+        $(".cip-msg").toggle(isDynamic);
+        syncOutput();
+      }
+      $mode.on("change", refresh);
+      $output.on("change", syncOutput);
+      // Rows added or removed change what Output can be
+      ns.onListChange($list, refresh);
+
+      // The upgrade. Until then the node is the one that was deployed, with the new form shown
+      // but switched off, so saving changes nothing.
+      var $add = $("#dialog-form .cip-multiple .red-ui-editableList-addButton");
+      $add.parent()[0].addEventListener(
+        "click",
+        function (event) {
+          if (!upgraded && $(event.target).closest(".red-ui-editableList-addButton").length) {
+            event.stopPropagation();
+            event.preventDefault();
+          }
+        },
+        true
+      );
+      function setUpgraded(on) {
+        upgraded = on;
+        $("#cip-sub-legacy").toggle(!on);
+        $mode.prop("disabled", !on);
+        $output.prop("disabled", !on);
+        if (on) {
+          $output.find("option[value=legacy]").remove();
+        } else {
+          $output[0].value = "legacy";
+        }
+        $(".cip-row-alias").prop("disabled", !on);
+        $(".cip-row-alias").attr("title", on ? "" : "Upgrade to enable");
+        $add.toggleClass("disabled", !on).css("opacity", on ? "" : "0.5");
+        $add.attr("title", on ? "Add a tag (accesskey T)" : "Upgrade to enable");
+        $output.attr("title", on ? "" : "Upgrade to enable");
+        $mode.attr("title", on ? "" : "Upgrade to enable");
+        $scanRate.typedInput("types", on ? upgradedScanTypes : scanTypes);
+        $deadband.typedInput("types", on ? upgradedBandTypes : bandTypes);
+      }
+      $("#cip-sub-upgrade").on("click", function () {
+        setUpgraded(true);
+        $output[0].value = rowCount() === 1 ? "value" : "keyvalue";
+        refresh();
+      });
+      setUpgraded(upgraded);
+      refresh();
+    },
+    oneditresize: function (size) {
+      window.cipSuiteEditor.fitFreeHeight(this, size);
+    },
+    oneditsave: function () {
+      var node = this;
+      var upgraded = $("#cip-sub-legacy").is(":hidden");
+
+      var rows = [];
+      $("#cip-sub-list")
+        .editableList("items")
+        .each(function () {
+          var row = $(this);
+          var tagInput = row.find(".cip-row-tag");
+          rows.push({
+            tagName: tagInput.typedInput("value"),
+            tagNameType: tagInput.typedInput("type"),
+            alias: row.find(".cip-row-alias").val().trim()
+          });
+        });
+      var $scanRate = $("#cip-sub-scanrate");
+      var $deadband = $("#cip-sub-deadband");
+      var bandType = $deadband.typedInput("type");
+
+      if (!upgraded) {
+        // Not upgraded: write back only what the original node has, and leave the rest unset so
+        // the node stays as it was.
+        node.tags = rows
+          .map(function (r) {
+            return r.tagName.trim();
+          })
+          .filter(Boolean)
+          .join(", ");
+        var rate = parseInt($scanRate.typedInput("value"), 10);
+        node.scanRate = rate > 0 ? rate : 1000;
+        var band = parseFloat($deadband.typedInput("value"));
+        node.deadband = bandType === "num" && band > 0 ? band : 0;
+        delete node.mode;
+        delete node.tagList;
+        delete node.tagsProp;
+        delete node.output;
+        delete node.scanRateType;
+        delete node.deadbandType;
+        return;
+      }
+
+      node.mode = $("#cip-sub-mode").val();
+      node.output = $("#cip-sub-output").val();
+      node.tagList = rows;
+      node.tagsProp = $("#cip-sub-tagsprop").typedInput("value") || "tags";
+      node.scanRateType = $scanRate.typedInput("type");
+      node.scanRate = $scanRate.typedInput("value");
+      node.deadbandType = bandType;
+      node.deadband = bandType === "none" ? 0 : $deadband.typedInput("value");
+      // Belongs to the original node
+      node.tags = "";
     }
   });
 </script>
@@ -29,18 +314,70 @@
     <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
     <input type="text" id="node-input-endpoint" />
   </div>
+
+  <div id="cip-sub-legacy" class="form-tips cip-legacy">
+    <div><b>Legacy mode.</b> This node still works as it did before: <code>msg.tags</code> replaces the tags and
+    <code>msg.scanRate</code> the scan rate, and the output is the value for one tag and an object keyed by tag name
+    for several.</div>
+    <div style="margin-top:4px;">Upgrading turns on aliases, the tag list, the Dynamic mode, the output options and an
+    environment variable for the scan rate and deadband. A message then changes the tags only in Dynamic mode, and no
+    longer the scan rate. A node with one tag keeps its output. Upgrade cannot be undone once the node is deployed.</div>
+    <button type="button" id="cip-sub-upgrade" class="red-ui-button" style="margin-top:6px;">
+      <i class="fa fa-arrow-up"></i> Upgrade
+    </button>
+  </div>
+
   <div class="form-row">
-    <label for="node-input-tags"><i class="fa fa-bookmark"></i> Tags</label>
-    <textarea id="node-input-tags" rows="4" style="width:70%; font-family:monospace;"
-      placeholder="Tag1, Tag2, Tag3&#10;or JSON array: [&quot;Tag1&quot;, &quot;Tag2&quot;]"></textarea>
+    <label for="cip-sub-mode"><i class="fa fa-list-alt"></i> Mode</label>
+    <select id="cip-sub-mode" style="width:70%">
+      <option value="ui">UI (list of tags)</option>
+      <option value="dynamic">Dynamic (msg)</option>
+    </select>
+  </div>
+
+  <div class="cip-multiple">
+    <div class="form-row" style="margin-bottom:0;">
+      <label><i class="fa fa-list"></i> Tags</label>
+    </div>
+    <div class="form-row">
+      <ol id="cip-sub-list"></ol>
+      <div class="form-tips cip-tip cip-tip-wide">Alias and tag. A tag can be a range such as MyArray[0..2]. The alias is the key of the tag in the result.</div>
+    </div>
+  </div>
+
+  <div class="cip-msg">
+    <div class="form-row">
+      <label for="cip-sub-tagsprop"><i class="fa fa-bookmark"></i> Tags</label>
+      <div class="cip-field">
+        <input type="text" id="cip-sub-tagsprop" />
+      </div>
+      <div class="form-tips cip-tip">An array of tag names or { name, alias } objects, or a comma separated string. A message replaces the list and scanning restarts. See Dynamic in the help.</div>
+    </div>
+  </div>
+
+  <div class="form-row">
+    <label for="cip-sub-output"><i class="fa fa-sign-out"></i> Output</label>
+    <select id="cip-sub-output" style="width:70%">
+      <option value="legacy">Legacy (see the note above)</option>
+      <option value="value">Value (one tag)</option>
+      <option value="keyvalue">Key Value pairs</option>
+      <option value="keyresult">Key Result pairs</option>
+      <option value="array">Array of results</option>
+    </select>
+    <div class="form-tips cip-tip" id="cip-sub-output-tip"></div>
+  </div>
+
+  <div class="form-row">
+    <label for="cip-sub-scanrate"><i class="fa fa-clock-o"></i> Scan (ms)</label>
+    <div class="cip-field">
+      <input type="text" id="cip-sub-scanrate" />
+    </div>
   </div>
   <div class="form-row">
-    <label for="node-input-scanRate"><i class="fa fa-clock-o"></i> Scan Rate (ms)</label>
-    <input type="number" id="node-input-scanRate" placeholder="1000" />
-  </div>
-  <div class="form-row">
-    <label for="node-input-deadband"><i class="fa fa-sliders"></i> Deadband</label>
-    <input type="number" id="node-input-deadband" placeholder="0" />
+    <label for="cip-sub-deadband"><i class="fa fa-sliders"></i> Deadband</label>
+    <div class="cip-field">
+      <input type="text" id="cip-sub-deadband" />
+    </div>
   </div>
   <div class="form-row">
     <label for="node-input-diffOnly"><i class="fa fa-filter"></i> Change Only</label>
@@ -52,28 +389,50 @@
 <script type="text/html" data-help-name="cip-subscribe">
   <p>Subscribes to tag values from an Allen-Bradley PLC by periodic scanning.</p>
   <h3>Inputs</h3>
-  <p>An incoming message can change what is scanned. Scanning itself starts when the endpoint connects.</p>
+  <p>Scanning starts when the endpoint connects. <b>Mode</b> says where the tags come from, and an incoming
+  message only changes them in <b>Dynamic</b> mode, so nothing in a message overrides what the editor shows.</p>
   <dl class="message-properties">
-    <dt class="optional">tags <span class="property-type">array | string</span></dt>
-    <dd>Replace the tag list: a comma-separated string, or an array of tag names (or of objects with a
-    <code>name</code>). It stays in force until the node is redeployed.</dd>
-    <dt class="optional">scanRate <span class="property-type">number</span></dt>
-    <dd>Replace the scan rate, in milliseconds.</dd>
+    <dt>UI (list of tags)</dt>
+    <dd>One row per tag: an optional alias and the tag, a string or an environment variable, with its own Browse button.
+    A tag can be a range such as <code>MyArray[0..2]</code>.</dd>
+    <dt>Dynamic (msg)</dt>
+    <dd>The tags come from a message property, <code>msg.tags</code> by default: an array of tag names, an array
+    of objects with a <code>name</code> (or <code>tagName</code>) and an optional <code>alias</code>, or a comma separated string.
+    Nothing is scanned until a message arrives. Each message replaces the list and restarts the scan, and the list stays in force
+    until the node is redeployed. A message that is not valid is rejected and the list is left as it was.</dd>
+  </dl>
+  <dl class="message-properties">
     <dt class="optional">action <span class="property-type">string</span></dt>
     <dd><code>"start"</code>, <code>"stop"</code> or <code>"restart"</code> to control scanning. Needs the
     <b>Dynamic</b> option on the endpoint, otherwise it is ignored. <code>msg.command</code> is accepted as an older name for the same thing.</dd>
   </dl>
+  <h3>Legacy mode</h3>
+  <p>A node saved before this version behaves as it always did, so a message can still replace the tags
+  with <code>msg.tags</code> and the scan rate with <code>msg.scanRate</code>. The editor shows it with a note and an
+  <b>Upgrade</b> button, with the tags it has as the rows of the list. Saving it without upgrading changes nothing.
+  Upgrading turns on everything on this page. A node with one tag keeps its output (the Value output). After an upgrade the
+  node logs a warning, once per deploy, if a message carries a <code>msg.tags</code> or <code>msg.scanRate</code> that it
+  does not read.</p>
   <h3>Outputs</h3>
   <dl class="message-properties">
-    <dt>payload <span class="property-type">object | any</span></dt>
-    <dd>With several tags, an object keyed by tag name, exactly as it was written in the list, so a
-    range such as <code>MyArray[0..2]</code> appears under that name as an array. With a single tag,
-    the value itself.</dd>
+    <dt>payload <span class="property-type">object | array | any</span></dt>
+    <dd>What <b>Output</b> says:
+      <ul>
+        <li><b>Value</b> (only for a list with exactly one tag): the value itself.</li>
+        <li><b>Key Value pairs</b>: <code>{ key: value }</code> for every tag, so <code>msg.payload.start</code> is the value. The key is the
+        row's alias, or the tag exactly as written. Keys are literal, so <code>MyUdt.Member</code> is one key and a range such as
+        <code>MyArray[0..2]</code> appears under that name as an array. Two tags with the same key is an error.</li>
+        <li><b>Key Result pairs</b>: <code>{ key: { tagName, value, type, changed } }</code>, with the same keys.</li>
+        <li><b>Array of results</b>: one <code>{ alias, tagName, value, type, changed }</code> per tag, in order (<code>alias</code> only when set).</li>
+      </ul>
+    </dd>
     <dt>tags <span class="property-type">array</span></dt>
-    <dd>One <code>{ name, value, type, changed }</code> entry per tag. With <b>Change Only</b> on and several
-    tags, only the tags that changed are listed, while <code>payload</code> still holds the current value of every tag.</dd>
+    <dd>One <code>{ name, alias, value, type, changed }</code> entry per tag. With <b>Change Only</b> on and several
+    tags, only the tags that changed are listed, while <code>payload</code> still holds the current value of every tag.
+    The same shape is what a cip-read (Dynamic) or a cip-write (Dynamic) takes, so wiring this node to one of them
+    reads or mirrors the tags that changed.</dd>
     <dt>tagName, dataType, changed <span class="property-type">string, string, boolean</span></dt>
-    <dd>Single tag only: its name, its CIP data type, and whether it changed.</dd>
+    <dd>Value output only: the tag's name, its CIP data type, and whether it changed.</dd>
     <dt>scanRate <span class="property-type">number</span></dt>
     <dd>The scan rate in use, in milliseconds.</dd>
     <dt>timestamp <span class="property-type">number</span></dt>
@@ -81,8 +440,14 @@
   </dl>
   <p>When the endpoint has the <b>Dynamic</b> option on, <code>msg.endpoint</code> is also set to the name of the endpoint that answered.</p>
   <h3>Details</h3>
-  <p>The node reads all configured tags at the specified <b>Scan Rate</b> interval. Tags can be
-  specified as a comma-separated list or a JSON array in the Tags field.</p>
+  <p>The node reads all its tags at the <b>Scan</b> interval. Scan is a number of milliseconds
+  or an environment variable, 1000 when empty. A scan rate that is not a positive whole number is reported and
+  the node does not scan.</p>
+  <p>The Browse button lists the tags of the connected PLC with their types and filters as you type: a space,
+  underscore, dot or dash matches one or more of those, so <code>em di 01</code> finds <code>_IO_EM_DI_01</code>,
+  and a word that starts the tag's type (<code>bool</code>, <code>dint</code>) filters on the type. The
+  add tag button has an accesskey, <b>Alt+T</b> in Chrome and Edge (<b>Alt+Shift+T</b> in Firefox,
+  <b>Ctrl+Option+T</b> on a Mac).</p>
   <h4>Report by Exception</h4>
   <p>With <b>Change Only</b> off, a message is sent after every scan. With it on, a message is sent only when
   at least one tag value has changed. Each tag is compared with the value it last reported, so a slow drift inside the
@@ -92,8 +457,8 @@
   <h4>Deadband</h4>
   <p>The <b>Deadband</b> value applies to numeric tags. A value change smaller than the deadband
   is not considered a change. This is useful for filtering out noise on analog signals.
-  Set to 0 to disable deadband filtering.</p>
-  <p>Scanning starts when the endpoint connects. Starting, stopping and restarting it by message needs the <b>Dynamic</b> option on the endpoint.</p>
+  Deadband is None (the default), a number, or an environment variable. None is the same as 0: any change counts.</p>
+  <p>Starting, stopping and restarting by message needs the <b>Dynamic</b> option on the endpoint.</p>
 
   <h3>Tag Addressing</h3>
   <ul>
