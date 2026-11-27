@@ -79,7 +79,7 @@ All nodes appear under the **CIP Suite** category with a grey CIP icon.
 | STRING | `MyString`, `MyUDT.Name` | Text, as a tag or as a UDT member (needs tag list). Text longer than the string fails the write |
 | Array of UDTs | `MyUDT` where `MyUDT : MyType[5]` | One object per element |
 | Program-scoped | `Program:MainProgram.MyTag` | Tag inside a program |
-| Batch | `msg.tags = ["Tag1","Tag2"]` | Multi-tag read via TagGroup |
+| Several tags | A row per tag in the list, or `msg.tags = ["Tag1","Tag2"]` in Dynamic mode | Multi-tag read via TagGroup |
 
 Tag paths are matched **case-insensitively**, the way Logix itself treats them —
 `fis_stn[0].local` and `FIS_Stn[0].Local` address the same tag and both decode into
@@ -458,19 +458,52 @@ npm run sim:pf525
 }
 ```
 
-Batch read (`msg.tags`) — `payload` is an array in the order requested, and a tag that
-could not be read carries an `error` string instead of a value:
+That is the **Value** output, for a list with exactly one tag. Several tags give **Key Value
+pairs**, **Key Result pairs** or an **Array of results**.
+
+**Key Value pairs** has one key per tag, the row's alias or else the tag exactly as written, so
+`MyUdt.Member` is one key and `MyArray[0..2]` and `MyArray[5..7]` are two. If any tag cannot be
+read, nothing is sent and the error names it:
+
+```json
+{
+  "payload": { "start": true, "MyIntArray": [100, 200, 300] },
+  "timestamp": 1710000000000
+}
+```
+
+**Key Result pairs** has the same keys, each holding the result of that tag, `{ tagName, value, type }`.
+A tag that could not be read carries an `error` string instead of a value and the others are still read:
+
+```json
+{
+  "payload": {
+    "start": { "tagName": "_IO_EM_DI_00", "value": true, "type": "BOOL" },
+    "Missing": { "tagName": "Missing", "value": null, "type": "", "error": "..." }
+  },
+  "timestamp": 1710000000000
+}
+```
+
+**Array of results** has one entry per tag in the order of the list, with the alias when set.
+A tag that could not be read carries an `error` string instead of a value and the others are still
+read:
 
 ```json
 {
   "payload": [
-    { "tagName": "MyDint", "value": 42, "type": "DINT" },
+    { "alias": "start", "tagName": "_IO_EM_DI_00", "value": true, "type": "BOOL" },
     { "tagName": "MyIntArray", "value": [100, 200, 300], "type": "INT" },
     { "tagName": "Missing", "value": null, "type": "", "error": "..." }
   ],
   "timestamp": 1710000000000
 }
 ```
+
+**Dynamic** mode reads the tags from a message property (`msg.tags` by default): tag names, or
+`{ name, alias, dataType, arraySize }` objects, or a comma separated string. A node saved before
+this version keeps its old behaviour (`msg.tags` and `msg.tagName` override the node, the output is the
+value for one tag and an array for `msg.tags`) until it is upgraded in the editor.
 
 ### cip-write Input
 

@@ -9,6 +9,7 @@ import {
   cipStatusText,
   cipTypeName,
   parseTagList,
+  describeTagType,
   parseBatchTags,
   withTiming,
   debounce,
@@ -420,6 +421,36 @@ describe("cipTypeName", () => {
 
   it("returns hex for unknown type", () => {
     expect(cipTypeName(0xff)).toBe("0xff");
+  });
+});
+
+// ── describeTagType ──
+
+describe("describeTagType", () => {
+  it("uses the type name the library resolved", () => {
+    expect(describeTagType({ code: 0xc4, typeName: "DINT" })).toBe("DINT");
+    expect(describeTagType({ code: 0x8123, typeName: "MyUDT" })).toBe("MyUDT");
+  });
+
+  it("falls back to our name for the code when the library has none", () => {
+    // The library leaves typeName null for a code it does not know, which printed [object Object]
+    expect(describeTagType({ code: 0xd4, typeName: null })).toBe("LWORD");
+  });
+
+  it("falls back to the code in hex for a code nobody has a name for", () => {
+    expect(describeTagType({ code: 0x1234, typeName: null })).toBe("0x1234");
+  });
+
+  it("accepts a plain string or number", () => {
+    expect(describeTagType("REAL")).toBe("REAL");
+    expect(describeTagType(0xca)).toBe("REAL");
+  });
+
+  it("never renders an object as text", () => {
+    expect(describeTagType({})).toBe("");
+    expect(describeTagType({ typeName: null })).toBe("");
+    expect(describeTagType(null)).toBe("");
+    expect(describeTagType(undefined)).toBe("");
   });
 });
 
