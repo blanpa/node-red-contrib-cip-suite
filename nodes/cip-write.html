@@ -5,6 +5,16 @@
     defaults: {
       name: { value: "" },
       endpoint: { value: "", type: "cip-endpoint", required: true },
+      // Only set once the node has been upgraded. A node saved before that has none of these
+      // (Node-RED does not fill in defaults for a property the saved node lacks), and a node
+      // without a mode runs exactly as it always did.
+      mode: { value: "ui" },
+      tagList: { value: [] },
+      value: { value: "payload" },
+      valueType: { value: "msg" },
+      tagsProp: { value: "tags" },
+      output: { value: "result" },
+      // Kept for nodes that have not been upgraded
       tagName: { value: "" },
       dataType: { value: "auto" },
       staticValue: { value: "" },
@@ -15,15 +25,263 @@
     icon: "cip.svg",
     paletteLabel: "cip write",
     label: function () {
-      return this.name || this.tagName || "cip write";
+      if (this.name) {
+        return this.name;
+      }
+      if (this.mode === undefined || this.mode === "") {
+        return this.tagName || "cip write";
+      }
+      if (this.mode === "dynamic") {
+        return "tags from msg." + (this.tagsProp || "tags");
+      }
+      var rows = this.tagList || [];
+      if (rows.length === 1) {
+        var only = rows[0] || {};
+        return only.alias || only.tagName || "cip write";
+      }
+      return rows.length + " tags";
     },
     oneditprepare: function () {
-      // Guarded, see the note on setupTagBrowse in cip-endpoint.html.
-      if (window.cipSuiteEditor) {
-        window.cipSuiteEditor.setupTagBrowse();
+      var node = this;
+      var ns = window.cipSuiteEditor;
+      // Nodes that have not been upgraded have no mode.
+      var upgraded = !(node.mode === undefined || node.mode === "");
+
+      var dataTypes = [
+        { value: "auto", label: "Auto" },
+        { value: "BOOL", label: "BOOL" },
+        { value: "INT", label: "INT" },
+        { value: "DINT", label: "DINT" },
+        { value: "REAL", label: "REAL" },
+        { value: "STRING", label: "STRING" }
+      ];
+      var legacyDataTypeValues = dataTypes.map(function (o) {
+        return o.value;
+      });
+      var allValueTypes = ["msg", "str", "num", "bool", "json", "env"];
+      var legacyValueTypes = ["msg", "str"];
+      var severalValueTypes = ["msg", "json", "env"];
+      var legacyRowTypes = ["str"];
+      var upgradedRowTypes = ["str", "msg", "env"];
+
+      var $mode = $("#cip-write-mode");
+      var $output = $("#cip-write-output");
+      var $list = $("#cip-write-list");
+      var $tagsProp = $("#cip-write-tagsprop");
+      var $value = $("#cip-write-value");
+
+      ns.typed($tagsProp, { types: ["msg"], default: "msg" });
+      ns.typed($value, { types: upgraded ? allValueTypes : legacyValueTypes, default: "msg", msg: "payload" });
+
+      var rows;
+      if (upgraded) {
+        $mode.val(node.mode);
+        $output.val(node.output || "array");
+        $tagsProp.typedInput("value", node.tagsProp || "tags");
+        $value.typedInput("type", node.valueType || "msg");
+        $value.typedInput("value", node.value === undefined ? "payload" : node.value);
+        rows = node.tagList && node.tagList.length ? node.tagList : [{}];
       } else {
-        console.warn("cip-suite: tag browse unavailable, cip-endpoint's editor script did not load");
+        // What the node already has: a ticked Static Value is a string Value, otherwise the
+        // value is msg.payload. An empty tag name meant the tag came from msg.tagName.
+        $mode.val("ui");
+        $output.val("result");
+        $tagsProp.typedInput("value", "tags");
+        if (node.useStaticValue) {
+          $value.typedInput("type", "str");
+          $value.typedInput("value", node.staticValue === undefined ? "" : String(node.staticValue));
+        } else {
+          $value.typedInput("type", "msg");
+          $value.typedInput("value", "payload");
+        }
+        var oldType = legacyDataTypeValues.indexOf(node.dataType) > -1 ? node.dataType : "auto";
+        rows = [{ tagName: node.tagName || "", tagNameType: "str", dataType: oldType }];
       }
+
+      var browser = ns.setupTagBrowse();
+
+      ns.setupList(node, $list, {
+        items: rows,
+        addItem: function (row, data) {
+          var line = $("<div/>", { style: "display:flex; gap:4px; align-items:center;" }).appendTo(row);
+          var rowAlias = $("<input/>", {
+            type: "text",
+            class: "cip-row-alias",
+            placeholder: "alias",
+            title: "Alias (optional): the name of the tag in a result and in the values",
+            style: "flex:0 1 90px; width:90px; min-width:40px; margin:0; box-sizing:border-box;"
+          }).appendTo(line);
+          var tagBox = $("<div/>", { class: "cip-row-tagbox", style: "flex:1 1 120px; min-width:60px;" }).appendTo(line);
+          var rowTag = $("<input/>", { type: "text", class: "cip-row-tag" }).appendTo(tagBox);
+          var rowBrowse = $("<button/>", {
+            type: "button",
+            class: "red-ui-button cip-row-browse",
+            title: "Browse tags from PLC",
+            style: "margin:0; flex:0 0 auto;"
+          })
+            .append('<i class="fa fa-search"></i>')
+            .appendTo(line);
+          var rowType = $("<select/>", {
+            class: "cip-row-datatype",
+            title: "Data type: checks that the tag has it",
+            style: "flex:0 0 auto; width:80px; margin:0;"
+          }).appendTo(line);
+          dataTypes.forEach(function (o) {
+            rowType.append($("<option/>").val(o.value).text(o.label));
+          });
+
+          ns.rowTag(browser, rowTag, rowBrowse, data, upgraded ? upgradedRowTypes : legacyRowTypes);
+          rowType.val(data.dataType || "auto");
+          rowAlias.val(data.alias || "");
+          return rowAlias;
+        }
+      });
+
+      function rowCount() {
+        return $list.editableList("length");
+      }
+      function dynamic() {
+        return $mode.val() === "dynamic";
+      }
+      var OUTPUT_TIPS = {
+        legacy: "Legacy output: one result for one tag, an array of results when msg.tags is used. Upgrade to choose.",
+        result: "payload is { success, tagName, value, timestamp }. A failed write raises an error.",
+        keyresult: "payload is { key: result }, the key being the alias or the tag as written. A tag that fails has success false and an error, the rest are still written.",
+        array: "payload is an array of results, one per tag. A tag that fails has success false and an error, the rest are still written."
+      };
+      var VALUE_TIPS = {
+        one: "What is written, as it is: msg.payload by default. An array goes to an array tag and an object to a UDT.",
+        several: "An array of values (by position), an object keyed by alias or tag, or an array of { name, value } as cip-read sends."
+      };
+      function syncOutput() {
+        var canResult = !dynamic() && rowCount() === 1;
+        $output.find("option[value=result]").prop("disabled", !canResult);
+        // The native value: jQuery's val() skips a disabled option and would say there is none
+        if (!canResult && $output[0].value === "result") {
+          $output.val("array");
+        }
+        $("#cip-write-output-tip").text(OUTPUT_TIPS[$output[0].value] || "");
+      }
+      function syncValue() {
+        var several = !dynamic() && rowCount() > 1;
+        var before = $value.typedInput("type");
+        $value.typedInput("types", !upgraded ? legacyValueTypes : several ? severalValueTypes : allValueTypes);
+        if ($value.typedInput("type") !== before) {
+          // The old type has no place here, so the value that went with it means nothing
+          $value.typedInput("value", $value.typedInput("type") === "msg" ? "payload" : "");
+        }
+        $("#cip-write-value-label").text(several ? " Values" : " Value");
+        $("#cip-write-value-tip").text(several ? VALUE_TIPS.several : VALUE_TIPS.one);
+      }
+
+      function refresh() {
+        var isDynamic = dynamic();
+        $(".cip-multiple").toggle(!isDynamic);
+        $(".cip-msg").toggle(isDynamic);
+        $("#cip-write-value-row").toggle(!isDynamic);
+        syncOutput();
+        syncValue();
+      }
+      $mode.on("change", refresh);
+      $output.on("change", syncOutput);
+      // Rows added or removed change what Output and Value can be
+      ns.onListChange($list, refresh);
+
+      // The upgrade. Until then the node is the one that was deployed, with the new form shown
+      // but switched off, so saving changes nothing.
+      var $add = $("#dialog-form .cip-multiple .red-ui-editableList-addButton");
+      $add.parent()[0].addEventListener(
+        "click",
+        function (event) {
+          if (!upgraded && $(event.target).closest(".red-ui-editableList-addButton").length) {
+            event.stopPropagation();
+            event.preventDefault();
+          }
+        },
+        true
+      );
+      function setUpgraded(on) {
+        upgraded = on;
+        $("#cip-write-legacy").toggle(!on);
+        $mode.prop("disabled", !on);
+        $output.prop("disabled", !on);
+        if (on) {
+          $output.find("option[value=legacy]").remove();
+        } else {
+          $output[0].value = "legacy";
+        }
+        $(".cip-row-alias").prop("disabled", !on);
+        $(".cip-row-alias").attr("title", on ? "" : "Upgrade to enable");
+        $add.toggleClass("disabled", !on).css("opacity", on ? "" : "0.5");
+        $add.attr("title", on ? "Add a tag (accesskey T)" : "Upgrade to enable");
+        $output.attr("title", on ? "" : "Upgrade to enable");
+        $mode.attr("title", on ? "" : "Upgrade to enable");
+        $(".cip-row-tag").typedInput("types", on ? upgradedRowTypes : legacyRowTypes);
+      }
+      $("#cip-write-upgrade").on("click", function () {
+        // An empty tag name meant the tag came from msg.tagName, so it still does
+        var $first = $list.editableList("items").first().find(".cip-row-tag");
+        setUpgraded(true);
+        $output[0].value = rowCount() === 1 ? "result" : "array";
+        if ($first.length && !$first.typedInput("value")) {
+          $first.typedInput("type", "msg");
+          $first.typedInput("value", "tagName");
+        }
+        refresh();
+      });
+      setUpgraded(upgraded);
+      refresh();
+    },
+    oneditresize: function (size) {
+      window.cipSuiteEditor.fitFreeHeight(this, size);
+    },
+    oneditsave: function () {
+      var node = this;
+      var upgraded = $("#cip-write-legacy").is(":hidden");
+
+      var rows = [];
+      $("#cip-write-list")
+        .editableList("items")
+        .each(function () {
+          var row = $(this);
+          var tagInput = row.find(".cip-row-tag");
+          rows.push({
+            tagName: tagInput.typedInput("value"),
+            tagNameType: tagInput.typedInput("type"),
+            alias: row.find(".cip-row-alias").val().trim(),
+            dataType: row.find(".cip-row-datatype").val()
+          });
+        });
+      var $value = $("#cip-write-value");
+
+      if (!upgraded) {
+        // Not upgraded: write back only what the original node has, and leave the rest unset so
+        // the node stays as it was.
+        var first = rows[0] || {};
+        node.tagName = first.tagNameType === "str" ? first.tagName : "";
+        node.dataType = first.dataType || "auto";
+        node.useStaticValue = $value.typedInput("type") === "str";
+        node.staticValue = node.useStaticValue ? $value.typedInput("value") : "";
+        delete node.mode;
+        delete node.tagList;
+        delete node.value;
+        delete node.valueType;
+        delete node.tagsProp;
+        delete node.output;
+        return;
+      }
+
+      node.mode = $("#cip-write-mode").val();
+      node.output = $("#cip-write-output").val();
+      node.tagList = rows;
+      node.tagsProp = $("#cip-write-tagsprop").typedInput("value") || "tags";
+      node.valueType = $value.typedInput("type");
+      node.value = $value.typedInput("value");
+      // Value says it all now
+      node.useStaticValue = false;
+      node.staticValue = "";
+      node.tagName = "";
+      node.dataType = "auto";
     }
   });
 </script>
@@ -37,69 +295,127 @@
     <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
     <input type="text" id="node-input-endpoint" />
   </div>
-  <div class="form-row">
-    <label for="node-input-tagName"><i class="fa fa-bookmark"></i> Tag Name</label>
-    <div style="display:flex; gap:4px;">
-      <input type="text" id="node-input-tagName" placeholder="Program:MainProgram.MyTag" style="flex:1" />
-      <button type="button" id="node-input-browse-btn" class="red-ui-button" title="Browse tags from PLC">
-        <i class="fa fa-search"></i>
-      </button>
-    </div>
+
+  <div id="cip-write-legacy" class="form-tips cip-legacy">
+    <div><b>Legacy mode.</b> This node still works as it did before: <code>msg.tagName</code> and
+    <code>msg.tags</code> override what is set here, a tag is written with <code>msg.payload</code> (or the static
+    value), and the output is one result for one tag and an array of results for <code>msg.tags</code>.</div>
+    <div style="margin-top:4px;">Upgrading turns on the tag list, aliases and the output options. A message
+    then changes what is written only where a field says so. A node with one tag keeps its output. One that
+    wrote <code>msg.tags</code> needs the Dynamic mode, and its output is the same array of results.
+    Upgrade cannot be undone once the node is deployed.</div>
+    <button type="button" id="cip-write-upgrade" class="red-ui-button" style="margin-top:6px;">
+      <i class="fa fa-arrow-up"></i> Upgrade
+    </button>
   </div>
-  <div class="form-row" id="node-input-taglist-row" style="display:none;">
-    <label><i class="fa fa-list"></i> Tags</label>
-    <select id="node-input-taglist" size="8" style="width:70%; font-family:monospace;"></select>
-  </div>
+
   <div class="form-row">
-    <label for="node-input-dataType"><i class="fa fa-database"></i> Data Type</label>
-    <select id="node-input-dataType">
-      <option value="auto">Auto-detect</option>
-      <option value="BOOL">BOOL</option>
-      <option value="INT">INT (16-bit)</option>
-      <option value="DINT">DINT (32-bit)</option>
-      <option value="REAL">REAL (float)</option>
-      <option value="STRING">STRING</option>
+    <label for="cip-write-mode"><i class="fa fa-list-alt"></i> Mode</label>
+    <select id="cip-write-mode" style="width:70%">
+      <option value="ui">UI (list of tags)</option>
+      <option value="dynamic">Dynamic (msg)</option>
     </select>
   </div>
-  <div class="form-row">
-    <label for="node-input-useStaticValue"><i class="fa fa-pencil"></i> Static Value</label>
-    <input type="checkbox" id="node-input-useStaticValue" style="width:auto" />
-    <span>Use static value instead of msg.payload</span>
+
+  <div class="cip-multiple">
+    <div class="form-row" style="margin-bottom:0;">
+      <label><i class="fa fa-list"></i> Tags</label>
+    </div>
+    <div class="form-row">
+      <ol id="cip-write-list"></ol>
+      <div class="form-tips cip-tip cip-tip-wide">Alias, tag and data type. The data type only checks that the tag has it. The alias is the name a value can be given by.</div>
+    </div>
   </div>
+
+  <div class="form-row" id="cip-write-value-row">
+    <label for="cip-write-value"><i class="fa fa-pencil"></i><span id="cip-write-value-label"> Value</span></label>
+    <div class="cip-field">
+      <input type="text" id="cip-write-value" />
+    </div>
+    <div class="form-tips cip-tip" id="cip-write-value-tip"></div>
+  </div>
+
+  <div class="cip-msg">
+    <div class="form-row">
+      <label for="cip-write-tagsprop"><i class="fa fa-bookmark"></i> Tags</label>
+      <div class="cip-field">
+        <input type="text" id="cip-write-tagsprop" />
+      </div>
+      <div class="form-tips cip-tip">An array of { name, value } objects, or an object of values by tag name. See Dynamic in the help.</div>
+    </div>
+  </div>
+
   <div class="form-row">
-    <label for="node-input-staticValue"><i class="fa fa-pencil-square-o"></i> Value</label>
-    <input type="text" id="node-input-staticValue" placeholder="Static value" />
+    <label for="cip-write-output"><i class="fa fa-sign-out"></i> Output</label>
+    <select id="cip-write-output" style="width:70%">
+      <option value="legacy">Legacy (see the note above)</option>
+      <option value="result">Result (one tag)</option>
+      <option value="keyresult">Key Result pairs</option>
+      <option value="array">Array of results</option>
+    </select>
+    <div class="form-tips cip-tip" id="cip-write-output-tip"></div>
   </div>
 </script>
 
 <script type="text/html" data-help-name="cip-write">
-  <p>Writes a value to a tag on an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
+  <p>Writes values to tags on an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
   <h3>Inputs</h3>
+  <p>An incoming message triggers a write. <b>Mode</b> says which tags are written, and nothing else in the
+  message changes that, so no message property can override what the editor shows.</p>
   <dl class="message-properties">
-    <dt>payload <span class="property-type">*</span></dt>
-    <dd>The value to write (unless static value is configured).</dd>
-    <dt>tagName <span class="property-type">string</span></dt>
-    <dd>Optional override for the configured tag name.</dd>
+    <dt>UI (list of tags)</dt>
+    <dd>One row per tag. A row has an optional alias, a tag (a string, an environment variable or a message property such as
+    <code>msg.payload.tag1</code>) and a data type that checks the tag.
+    <b>Value</b> holds the value or values, as a message property (<code>msg.payload</code> by default), or fixed
+    text, a number, a boolean, json or an environment variable.
+      <ul>
+        <li>With <b>one tag</b>, the value is written to it as it is: an array goes to an array tag, an object to a UDT.</li>
+        <li>With <b>several tags</b>, Values is an array (one value per row, by position), an object keyed by the row's
+        alias or tag as written, e.g. <code>{ "start": true, "MyArray[1]": 123 }</code>, or an array of
+        <code>{ name, value }</code> entries (<code>tagName</code> works in place of <code>name</code>), which is what cip-read's
+        Array of results and cip-subscribe's <code>msg.tags</code> hold. An array is read as entries when its elements are
+        objects with a <code>name</code> or <code>tagName</code>. The values of the object can also be results,
+        <code>{ tagName, value }</code>, as in cip-read's Key Result pairs, so a read can be fed to a write as it is.</li>
+      </ul>
+    </dd>
+    <dt>Dynamic (msg)</dt>
+    <dd>The tags and their values come from a message property, <code>msg.tags</code> by default. See Dynamic below.</dd>
   </dl>
-  <p>For batch writes, set <code>msg.tags</code> to an array of objects, each with <code>name</code>
-  and <code>value</code> properties. The tags are written one after another.</p>
+  <p>A value missing, a name that is not one of the tags, a name used twice, or a different number of values than tags
+  fails the whole message before anything is written.</p>
+  <h3>Legacy mode</h3>
+  <p>A node saved before this version keeps working as it did, so <code>msg.tagName</code> and <code>msg.tags</code> still
+  override the node, a tag is written with <code>msg.payload</code> (or the static value), and the output is one result for one
+  tag and an array of results for <code>msg.tags</code>. The editor shows it with a note and an <b>Upgrade</b> button.
+  Saving it without upgrading changes nothing. Upgrading turns on everything on this page. A ticked Static Value becomes a
+  string Value, otherwise Value is <code>msg.payload</code>, and an empty tag name reads <code>msg.tagName</code>. A node
+  with one tag keeps its output. A node that wrote <code>msg.tags</code> should use Dynamic mode. After an upgrade the node
+  logs a warning, once per deploy, when a message carries <code>msg.tags</code> that it is not set to read.</p>
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload.success <span class="property-type">boolean</span></dt>
     <dd>Whether the write was successful.</dd>
     <dt>payload.tagName <span class="property-type">string</span></dt>
     <dd>The tag that was written.</dd>
+    <dt>payload.alias <span class="property-type">string</span></dt>
+    <dd>The alias of the tag, when it has one.</dd>
     <dt>payload.value <span class="property-type">*</span></dt>
     <dd>The value that was written. Only on success.</dd>
     <dt>payload.error <span class="property-type">string</span></dt>
-    <dd>Why the write failed, e.g. <code>Access goes past the end of the tag (CIP 0xff, extended 0x2105)</code>.
-    Only on failure. A failed write also raises an error that a Catch node receives.</dd>
+    <dd>Why the write failed, e.g. <code>Access goes past the end of the tag (CIP 0x05, extended 0x2105)</code>.
+    Only on failure. With the Result output a failed write also raises an error that a Catch node receives.</dd>
     <dt>payload.generalStatusCode, payload.extendedStatus <span class="property-type">number, array</span></dt>
     <dd>The CIP status codes, when the controller refused the write. They are absent when the node
     refused the value before sending it.</dd>
     <dt>payload.timestamp <span class="property-type">number</span></dt>
     <dd>Unix timestamp (ms) of the write.</dd>
   </dl>
+  <p><b>Output</b> is <b>Result</b> (only for a list with exactly one tag), where <code>msg.payload</code> is the result of the
+  write, <b>Key Result pairs</b>, where it is <code>{ key: result }</code> with the alias (or the tag as written) as the key,
+  or <b>Array of results</b>, where it is an array with one result per tag in the order of the list. A tag that fails
+  has <code>success: false</code> and an <code>error</code>, and the remaining tags are still written. The node status turns
+  yellow when that happens. A write cannot be undone, so unlike a read there is no result that stops at the first
+  failure once writing has started.</p>
   <h3>Details</h3>
   <p>Backpressure is applied: if a write is already in-flight, subsequent messages are dropped with a warning.</p>
   <p><b>Data Type:</b> the node reads each tag before writing it, so the controller's own type
@@ -107,8 +423,13 @@
   tag really has that type and fails the write otherwise, e.g. <code>MyDint is DINT, but the
   node's Data Type is REAL</code>. <i>STRING</i> also accepts Logix STRING tags, which are
   structures; custom string types such as STRING20 count as STRING here. Bit writes (<code>MyDint.5</code>) are not checked.</p>
-  <p>Click the <i class="fa fa-search"></i> button next to the tag name field to browse available tags
-  from the connected PLC. The endpoint must be deployed and connected first.</p>
+  <p>Click the <i class="fa fa-search"></i> button on a row to browse available tags from the connected PLC. The
+  endpoint must be deployed and connected first. The list shows each tag with its type and filters as you type: a space,
+  underscore, dot or dash matches one or more of those, so <code>em di 01</code> finds <code>_IO_EM_DI_01</code>, and a
+  word that starts the tag's type (<code>bool</code>, <code>dint</code>) filters on the type. It opens on the tag already in the field.
+  Browsing fills a string, so the button is off when the tag comes from a message property or an environment variable.</p>
+  <p>The <b>add tag</b> button has an accesskey, <b>Alt+T</b> in Chrome and Edge
+  (<b>Alt+Shift+T</b> in Firefox, <b>Ctrl+Option+T</b> on a Mac), and a new row takes the focus.</p>
   <h3>Tag Addressing</h3>
   <ul>
     <li><b>Bit-level writes:</b> Use dot notation, e.g. <code>MyDint.5</code> writes bit 5 of a DINT tag. The node reads the tag,
@@ -137,10 +458,18 @@
     character array, and the node refuses to write text to it.</li>
     <li><b>Program-scoped:</b> Use <code>Program:MainProgram.TagName</code> syntax.</li>
   </ul>
-  <h3>Batch Mode</h3>
-  <p>Send <code>msg.tags</code> as an array of <code>{ name: "TagName", value: 42 }</code> objects to
-  write several tags, one after another. The output <code>msg.payload</code> is an array with one result per tag, in the order given.
-  A tag that fails carries <code>success: false</code> and an <code>error</code>, and the remaining tags are still written.</p>
+  <h3>Dynamic</h3>
+  <p>Writes the tags from the message property named in the <b>Tags</b> field, <code>msg.tags</code> by default. It can be:</p>
+  <ul>
+    <li>an array of <code>{ name, value }</code> objects. <code>tagName</code> is accepted in place of <code>name</code>.
+    <code>dataType</code> checks that tag's type and <code>alias</code> is carried into its result. The entries a cip-read
+    (Array of results) or a cip-subscribe (<code>msg.tags</code>) sends are accepted, and a cip-subscribe wired in mirrors each
+    change.</li>
+    <li>an object of values by tag name, e.g. <code>{ "MyDint": 1, "MyArray[0..2]": [1, 2, 3] }</code>. A value can be a result,
+    <code>{ tagName, value }</code>, as in cip-read's Key Result pairs. The tag is then its <code>tagName</code> and the key is its alias.</li>
+  </ul>
+  <p>The output is an Array of results or Key Result pairs, as chosen. An entry that is not valid, such as a number, an empty name or one with no value, fails the whole
+  message before anything is written. The error lists every bad entry by position and can be caught with a Catch node.</p>
 
   <h3>Dynamic control</h3>
   <p>The PLC connection can be selected, re-pointed and controlled at runtime with

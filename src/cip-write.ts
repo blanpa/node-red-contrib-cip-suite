@@ -38,6 +38,7 @@ import {
   endpointLabel,
   applyInitialStatus
 } from "./endpoint-dynamic";
+import { WriteItem, WritePlan, buildWritePlan } from "./write-plan";
 
 /**
  * The tag types each Data Type option accepts. Logix holds STRING as a structure, so the
@@ -90,17 +91,24 @@ module.exports = function (RED: any) {
     node.useAtomicBitWrite = config.useAtomicBitWrite || false;
     node._writing = false;
 
+    // An upgraded node writes what its tag list (or the message property it names) says and
+    // nothing else. One that has not been upgraded has no plan and behaves as it always did.
+    const plan: WritePlan | null = buildWritePlan(config, (value, type, msg) =>
+      RED.util.evaluateNodeProperty(value, type, node, msg)
+    );
+    if (plan?.error) node.error(plan.error);
+
     /**
      * Every write reads the tag first, so the controller's own type is what goes out.
      * A Data Type other than Auto only checks that type, so a node meant for a REAL
      * fails clearly instead of writing a tag it was not set up for.
      */
-    function checkDataType(tag: any, tagName: string): void {
-      const accepted = DATA_TYPE_MATCHES[node.dataType];
+    function checkDataType(tag: any, tagName: string, dataType: string = node.dataType): void {
+      const accepted = DATA_TYPE_MATCHES[dataType];
       if (!accepted) return;
       const actual = typeof tag.type === "number" ? cipTypeName(tag.type) : String(tag.type);
       if (!accepted.includes(actual)) {
-        throw new Error(`${tagName} is ${actual}, but the node's Data Type is ${node.dataType}`);
+        throw new Error(`${tagName} is ${actual}, but the node's Data Type is ${dataType}`);
       }
     }
 
@@ -221,7 +229,12 @@ module.exports = function (RED: any) {
     /**
      * Write a single tag with support for bit access, array elements, array ranges, and UDTs.
      */
-    async function writeSingleTag(tagName: string, value: any, use?: any): Promise<WriteResult> {
+    async function writeSingleTag(
+      tagName: string,
+      value: any,
+      use?: any,
+      dataType: string = node.dataType
+    ): Promise<WriteResult> {
       const parsed = parseTagName(tagName);
       const endpoint = use || node.endpoint;
       if (!endpoint) throw new Error("No endpoint selected");
@@ -304,7 +317,7 @@ module.exports = function (RED: any) {
         await controller.readTag(first); // init type
         for (let i = 0; i < count; i++) {
           const elemName = `${parsed.baseName}[${parsed.arrayStart + i}]`;
-          checkDataType(first, elemName);
+          checkDataType(first, elemName, dataType);
           assertValueFitsNumeric(first, value[i], elemName, true);
         }
         if (ARRAY_WRITE_TYPES.includes(first.type)) {
@@ -332,7 +345,7 @@ module.exports = function (RED: any) {
         parsed.arrayIndex !== null ? `${parsed.baseName}[${parsed.arrayIndex}]` : parsed.baseName;
       const tag = new Tag(fullName);
       await controller.readTag(tag); // init type
-      checkDataType(tag, tagName);
+      checkDataType(tag, tagName, dataType);
 
       // Structure write. Tag.type is the type name, so a structure reads as "STRUCT". Logix
       // holds STRING as a structure too (LEN + DATA), so text goes this way as well: the
@@ -406,16 +419,19 @@ module.exports = function (RED: any) {
      * Write multiple tags in batch.
      */
     async function writeBatch(
-      tags: Array<{ name: string; value: any }>,
+      tags: Array<{ name: string; value: any; alias?: string; dataType?: string }>,
       use?: any
     ): Promise<WriteResult[]> {
       const results: WriteResult[] = [];
       for (const item of tags) {
+        // The alias leads, so it sits beside the tag name in a result
+        const alias = item.alias ? { alias: item.alias } : {};
         try {
-          const r = await writeSingleTag(item.name, item.value, use);
-          results.push(r);
+          const r = await writeSingleTag(item.name, item.value, use, item.dataType ?? node.dataType);
+          results.push({ ...alias, ...r });
         } catch (err: any) {
           results.push({
+            ...alias,
             success: false,
             tagName: item.name,
             value: item.value,
@@ -425,6 +441,100 @@ module.exports = function (RED: any) {
         }
       }
       return results;
+    }
+
+    const warnedUnused = new Set<string>();
+    /** Tell the user, once per deploy, that a message carries a msg.tags this node does not read. */
+    function warnUnusedProps(msg: any): void {
+      if (!plan) return;
+      for (const name of plan.unusedProps(msg)) {
+        if (warnedUnused.has(name)) continue;
+        warnedUnused.add(name);
+        node.warn(
+          'Ignoring msg.tags. Set Mode to "Dynamic" and the property to msg.tags to write the tags from the message.'
+        );
+      }
+    }
+
+    /**
+     * The input of an upgraded node. Every item was checked by the plan, so a message that is
+     * not valid has written nothing by the time it fails.
+     */
+    async function writeFromPlan(msg: any, endpoint: any, done: any): Promise<void> {
+      const settle = (err?: Error): void => {
+        if (typeof done === "function") {
+          err ? done(err) : done();
+        } else if (err) {
+          node.error(err.message, msg);
+        }
+      };
+      warnUnusedProps(msg);
+      const request = plan!.resolve(msg);
+      if (request.kind === "none") {
+        node.warn(request.reason);
+        settle();
+        return;
+      }
+      if (request.kind === "error") {
+        node.status({ fill: "red", shape: "ring", text: "invalid input" });
+        settle(new Error(request.error));
+        return;
+      }
+
+      const items: WriteItem[] = request.items;
+      if (plan!.output === "result" && items.length === 1) {
+        const item = items[0];
+        try {
+          const { result, elapsed } = await withTiming(() =>
+            writeSingleTag(item.name, item.value, endpoint, item.dataType ?? node.dataType)
+          );
+          node.status({ fill: "green", shape: "dot", text: `${item.name} written (${elapsed}ms)` });
+          msg.payload = result;
+          node.send(stampEndpoint(msg, endpoint));
+          settle();
+        } catch (err: any) {
+          node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
+          msg.payload = {
+            success: false,
+            tagName: item.name,
+            ...cipErrorFields(err),
+            timestamp: Date.now(),
+          } as WriteResult;
+          node.send(stampEndpoint(msg, endpoint));
+          settle(toCipError(err, `Write failed for ${item.name}`));
+        }
+        return;
+      }
+
+      const { result: results, elapsed } = await withTiming(() => writeBatch(items, endpoint));
+      const failed = results.filter((r: WriteResult) => !r.success).length;
+      if (plan!.output === "keyresult") {
+        // The key says which tag, so the alias is not repeated inside the result
+        const keyed: Record<string, any> = {};
+        results.forEach((r: any, i: number) => {
+          const { alias: _alias, ...rest } = r;
+          // defineProperty so an alias of __proto__ is a key and not the prototype
+          Object.defineProperty(keyed, items[i].alias || items[i].name, {
+            value: rest,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        });
+        msg.payload = keyed;
+      } else {
+        msg.payload = results;
+      }
+      node.status({
+        fill: failed > 0 ? "yellow" : "green",
+        shape: "dot",
+        text:
+          failed > 0
+            ? `${results.length - failed} of ${results.length} tags written (${elapsed}ms)`
+            : `${results.length} tags written (${elapsed}ms)`,
+      });
+      node.send(stampEndpoint(msg, endpoint));
+      settle();
     }
 
     // Connection lifecycle
@@ -466,6 +576,10 @@ module.exports = function (RED: any) {
 
       node._writing = true;
       try {
+        if (plan) {
+          await writeFromPlan(msg, endpoint, done);
+          return;
+        }
         // Batch mode: msg.tags is array of {name, value}
         if (Array.isArray(msg.tags)) {
           const { result: batchResults, elapsed } = await withTiming(() =>
