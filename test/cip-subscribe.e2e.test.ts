@@ -65,6 +65,7 @@ function makeSubscribeNode(config: Record<string, any>) {
     sent,
     warnings,
     connect: () => handlers["cip:connected"](),
+    input: (msg: any) => handlers.input(msg, () => {}, () => {}),
     close: () => new Promise<void>((resolve) => handlers.close(false, resolve)),
   };
 }
@@ -103,6 +104,43 @@ beforeAll(async () => {
 afterAll(async () => {
   if (plc) await plc.disconnect().catch(() => {});
   if (sim && !sim.killed) sim.kill("SIGKILL");
+});
+
+describe("cip-subscribe msg.tags", () => {
+  it("takes the name from a tagName object, as a cip-read batch emits", async () => {
+    const sub = makeSubscribeNode({ tags: "MyDint" });
+    try {
+      sub.connect();
+      await until(() => sub.sent.length > 0);
+
+      sub.input({ tags: [{ tagName: "MyIntArray[0..2]", value: [1, 2, 3], type: "INT" }] });
+      await until(() => sub.sent.some((m) => m.tagName === "MyIntArray[0..2]"));
+    } finally {
+      await sub.close();
+    }
+
+    expect(sub.warnings).toEqual([]);
+    expect(sub.sent.some((m) => m.tagName === "undefined")).toBe(false);
+  });
+
+  it("takes a comma separated string", async () => {
+    const sub = makeSubscribeNode({ tags: "MyDint" });
+    // A single tag sends its bare value as the payload, several send an object keyed by name
+    const keyed = (m: any) =>
+      m.payload !== null && typeof m.payload === "object" && "MyIntArray[0..2]" in m.payload;
+    try {
+      sub.connect();
+      await until(() => sub.sent.length > 0);
+
+      sub.input({ tags: "MyIntArray[0..2],MyDint" });
+      await until(() => sub.sent.some(keyed));
+    } finally {
+      await sub.close();
+    }
+
+    expect(sub.warnings).toEqual([]);
+    expect(sub.sent.find(keyed).payload["MyIntArray[0..2]"]).toEqual([100, 200, 300]);
+  });
 });
 
 describe("cip-subscribe array ranges", () => {

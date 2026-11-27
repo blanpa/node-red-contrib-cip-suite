@@ -72,9 +72,9 @@
   <p>Reads a tag value from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
   <h3>Inputs</h3>
   <p>An incoming message triggers a read. Set <code>msg.tagName</code> to override the configured tag.</p>
-  <p>For batch reads, set <code>msg.tags</code> to an array of tag name strings. Plain tags are read
-  together in one operation; arrays and UDTs are read individually, since they need their own
-  element count or structure decoding.</p>
+  <p>For batch reads, set <code>msg.tags</code> (see Batch Mode below). <code>msg.tags</code> wins over
+  the Tag Name field. Plain tags are read together in one operation; arrays and UDTs are read
+  individually, since they need their own element count or structure decoding.</p>
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload <span class="property-type">*</span></dt>
@@ -131,9 +131,25 @@
   <code>mystruct.member</code> and <code>MyStruct.Member</code> address the same tag and
   both decode into an object.</p>
   <h3>Batch Mode</h3>
-  <p>Send <code>msg.tags</code> as an array of tag names to read several tags at once.
-  <code>msg.payload</code> is an array of <code>{ tagName, value, type }</code> objects in the
-  order requested.</p>
+  <p>Send <code>msg.tags</code> to read several tags at once. It can be:</p>
+  <ul>
+    <li>an array of tag names, e.g. <code>["Tag1", "MyArray[0..9]"]</code></li>
+    <li>an array of objects, <code>{ name, dataType, arraySize }</code>. <code>tagName</code> is accepted in place of
+    <code>name</code>. <code>dataType</code> (<i>ARRAY</i> or <i>STRUCT</i>) and <code>arraySize</code> (a positive
+    whole number) are optional and apply to that tag only. The entries a cip-subscribe sends
+    (<code>{ name, value, type, changed }</code>) are accepted.</li>
+    <li>a comma separated string, e.g. <code>"Tag1, Tag2, Arr[1,2]"</code>. A comma inside square brackets stays
+    part of the tag name.</li>
+  </ul>
+  <p><code>msg.tags</code> wins over the Tag Name field, so a cip-read wired after a cip-subscribe reads the
+  subscribed tags and not its own.</p>
+  <p><code>msg.payload</code> is an array of <code>{ tagName, value, type }</code> objects in the
+  order requested, so <code>payload[2]</code> is always the result for <code>tags[2]</code>. A tag the PLC
+  rejects, such as one that does not exist, has an <code>error</code> string in place of its value and
+  does not stop the other tags being read. The node status turns yellow when that happens.</p>
+  <p>An entry that is not valid, such as a number, an empty name, an object without a name or an
+  <code>arraySize</code> that is not a positive whole number, fails the whole message before anything is
+  read. The error lists every bad entry by position and can be caught with a Catch node.</p>
 
   <h3>Dynamic control</h3>
   <p>The PLC connection can be selected, re-pointed and controlled at runtime with

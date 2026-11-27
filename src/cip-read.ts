@@ -15,6 +15,8 @@
 import "./st-type-patch";
 import { CIPDataType, MultiTagResult } from "./types";
 import {
+  BatchEntry,
+  parseBatchTags,
   parseTagName,
   parseProgramScope,
   resolveMemberInfo,
@@ -282,7 +284,7 @@ module.exports = function (RED: any) {
      * Read multiple tags using TagGroup for batch efficiency.
      */
     async function readBatch(
-      tags: string[],
+      entries: BatchEntry[],
       use?: any
     ): Promise<MultiTagResult[]> {
       const endpoint = use || node.endpoint;
@@ -290,50 +292,73 @@ module.exports = function (RED: any) {
       const controller = endpoint.getController();
       if (!controller) throw new Error("Controller not available");
 
-      const { Tag, TagGroup } = require("st-ethernet-ip");
+      const { TagGroup } = require("st-ethernet-ip");
       const group = new TagGroup();
       const tagObjects: any[] = [];
 
-      for (const tagName of tags) {
-        const parsed = parseTagName(tagName);
-        const rawScope = parseProgramScope(parsed.baseName);
-        const tagList = controller.state?.tagList;
-        const scope = {
-          program: rawScope.program,
-          name: canonicalizeTagName(rawScope.name, tagList, rawScope.program),
-        };
-        parsed.baseName = scope.name;
-        const memberInfo = resolveMemberInfo(scope.name, tagList, scope.program);
-        const needsSpecialRead =
-          parsed.bitIndex !== null ||
-          parsed.isRange ||
-          node.dataType === "ARRAY" ||
-          node.dataType === "STRUCT" ||
-          memberInfo.isStruct ||
-          memberInfo.isArray;
+      for (const entry of entries) {
+        const tagName = entry.name;
+        try {
+          const parsed = parseTagName(tagName);
+          const rawScope = parseProgramScope(parsed.baseName);
+          const tagList = controller.state?.tagList;
+          const scope = {
+            program: rawScope.program,
+            name: canonicalizeTagName(rawScope.name, tagList, rawScope.program),
+          };
+          parsed.baseName = scope.name;
+          const memberInfo = resolveMemberInfo(scope.name, tagList, scope.program);
+          const dataType = entry.dataType ?? node.dataType;
+          const needsSpecialRead =
+            parsed.bitIndex !== null ||
+            parsed.isRange ||
+            dataType === "ARRAY" ||
+            dataType === "STRUCT" ||
+            entry.arraySize != null ||
+            memberInfo.isStruct ||
+            memberInfo.isArray;
 
-        if (needsSpecialRead) {
-          tagObjects.push({ name: tagName, tag: null, individual: true });
-        } else {
-          const fullName =
-            parsed.arrayIndex !== null ? `${parsed.baseName}[${parsed.arrayIndex}]` : scope.name;
-          const tag = createTag(controller, fullName, scope.program);
-          group.add(tag);
-          tagObjects.push({ name: tagName, tag, individual: false });
+          if (needsSpecialRead) {
+            tagObjects.push({ name: tagName, tag: null, individual: true, entry });
+          } else {
+            const fullName =
+              parsed.arrayIndex !== null ? `${parsed.baseName}[${parsed.arrayIndex}]` : scope.name;
+            const tag = createTag(controller, fullName, scope.program);
+            group.add(tag);
+            tagObjects.push({ name: tagName, tag, individual: false });
+          }
+        } catch (err: any) {
+          tagObjects.push({ name: tagName, tag: null, individual: false, error: describeCipError(err) });
         }
       }
 
       // TagGroup counts its members through `length`; `size` is undefined, which
       // used to skip the group read entirely and return null for every tag in it.
+      // One tag the controller rejects (such as a name that does not exist) fails the whole
+      // group reply and leaves every tag in it null. When the controller did answer, read
+      // the plain tags one at a time so each gets its own value or error. Anything without
+      // a CIP status is a connection problem and fails the batch as before.
+      let groupFailed = false;
       if (group.length > 0) {
-        await controller.readTagGroup(group);
+        try {
+          await controller.readTagGroup(group);
+        } catch (err: any) {
+          if (typeof err?.generalStatusCode !== "number") throw err;
+          groupFailed = true;
+        }
       }
 
       const results: MultiTagResult[] = [];
       for (const item of tagObjects) {
-        if (item.individual) {
+        if (item.error) {
+          results.push({ tagName: item.name, value: null, type: "", error: item.error });
+        } else if (item.individual) {
           try {
-            const r = await readSingleTag(item.name, {}, endpoint);
+            const r = await readSingleTag(
+              item.name,
+              { dataType: item.entry?.dataType, arraySize: item.entry?.arraySize },
+              endpoint
+            );
             results.push({
               tagName: item.name,
               value: r.value,
@@ -346,6 +371,17 @@ module.exports = function (RED: any) {
               type: "",
               ...cipErrorFields(err),
             });
+          }
+        } else if (groupFailed) {
+          try {
+            await controller.readTag(item.tag);
+            results.push({
+              tagName: item.name,
+              value: item.tag.value,
+              type: formatResultType(item.tag.type),
+            });
+          } catch (err: any) {
+            results.push({ tagName: item.name, value: null, type: "", ...cipErrorFields(err) });
           }
         } else {
           results.push({
@@ -383,9 +419,23 @@ module.exports = function (RED: any) {
 
       node._reading = true;
       try {
-        if (triggerMsg && Array.isArray(triggerMsg.tags)) {
+        // msg.tags (an array, or a comma separated string) wins over the configured Tag Name.
+        const batchTags = triggerMsg?.tags;
+        if (
+          Array.isArray(batchTags) ||
+          (typeof batchTags === "string" && batchTags.trim() !== "")
+        ) {
+          // A malformed entry is a flow bug, so nothing is read until every entry is valid.
+          const entries = parseBatchTags(batchTags);
+          const invalid = entries.filter((e) => e.error);
+          if (invalid.length > 0) {
+            node.status({ fill: "red", shape: "ring", text: "invalid msg.tags" });
+            settle(new Error(`Invalid msg.tags, nothing was read. ${invalid.map((e) => e.error).join("; ")}`));
+            return;
+          }
+
           const { result: batchResult, elapsed } = await withTiming(() =>
-            readBatch(triggerMsg.tags, endpoint)
+            readBatch(entries, endpoint)
           );
           const msg: any = {
             payload: batchResult,
@@ -393,10 +443,14 @@ module.exports = function (RED: any) {
             _msgid: triggerMsg._msgid,
             topic: triggerMsg.topic,
           };
+          const failed = batchResult.filter((r) => r.error).length;
           node.status({
-            fill: "green",
+            fill: failed > 0 ? "yellow" : "green",
             shape: "dot",
-            text: `${batchResult.length} tags read (${elapsed}ms)`,
+            text:
+              failed > 0
+                ? `${batchResult.length - failed} of ${batchResult.length} tags read (${elapsed}ms)`
+                : `${batchResult.length} tags read (${elapsed}ms)`,
           });
           node.send(stamp(msg));
           settle();

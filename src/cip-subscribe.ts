@@ -404,7 +404,9 @@ module.exports = function (RED: any) {
         const newTags = typeof msg.tags === "string"
           ? parseTagList(msg.tags)
           : Array.isArray(msg.tags)
-            ? msg.tags.map((t: any) => String(typeof t === "object" ? t.name : t).trim()).filter(Boolean)
+            ? msg.tags
+                .map((t: any) => String(t && typeof t === "object" ? (t.name ?? t.tagName ?? "") : (t ?? "")).trim())
+                .filter(Boolean)
             : [];
         if (newTags.length > 0) {
           node._configuredTags = newTags.join(",");
