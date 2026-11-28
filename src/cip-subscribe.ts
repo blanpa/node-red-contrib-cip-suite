@@ -13,6 +13,7 @@ import {
   NodeStatus,
 } from "./types";
 import { parseTagList, parseTagName, cipTypeName, STATUS, describeCipError } from "./utils";
+import { SubscribePlan, SubscribeTag, buildSubscribePlan } from "./subscribe-plan";
 import {
   DynOpts,
   handleEndpointMsg,
@@ -47,6 +48,7 @@ function typeLabel(type: unknown): string {
 
 interface TagState {
   name: string;
+  alias?: string;
   tag: any; // st-ethernet-ip Tag instance
   lastValue: any;
   changed: boolean;
@@ -58,8 +60,13 @@ module.exports = function (RED: any) {
     const node = this;
 
     node.endpoint = RED.nodes.getNode(config.endpoint) as CipEndpointNode | null;
-    node.scanRate = parseInt(config.scanRate as any, 10) || 1000;
-    node.deadband = parseFloat(config.deadband as any) || 0;
+    // An upgraded node takes its tags, scan rate and deadband from what the editor shows. One
+    // that has not been upgraded has no plan and keeps its original behaviour.
+    const plan: SubscribePlan | null = buildSubscribePlan(config, (value: string, type: string, msg?: any) =>
+      RED.util.evaluateNodeProperty(value, type, node, msg)
+    );
+    node.scanRate = plan ? plan.scanRate : parseInt(config.scanRate as any, 10) || 1000;
+    node.deadband = plan ? plan.deadband : parseFloat(config.deadband as any) || 0;
     node.diffOnly = config.diffOnly === true || (config.diffOnly as any) === "true";
     node._tagStates = [] as TagState[];
     node._scanning = false;
@@ -69,7 +76,7 @@ module.exports = function (RED: any) {
     node._scanGen = 0;
     node._inFlight = false;
     node._tagGroup = null;
-    node._configuredTags = config.tags || "";
+    node._tags = (plan ? plan.tags : parseTagList(config.tags || "").map((name: string) => ({ name }))) as SubscribeTag[];
 
     if (!node.endpoint) {
       node.status({ fill: "red", shape: "ring", text: "no endpoint" } as NodeStatus);
@@ -80,6 +87,31 @@ module.exports = function (RED: any) {
     // never fires a cip:* event (autoConnect off) shows whatever the editor last saw,
     // which after a restart is the previous run's status.
     applyInitialStatus(node);
+
+    // A tag list, output, scan rate or deadband that cannot be used is reported once, and the
+    // node does not scan. Redeploy to try again.
+    if (plan && plan.error) {
+      node.error(plan.error);
+      // After applyInitialStatus has had its turn, which would otherwise show "connected".
+      setTimeout(() => {
+        node.status({ fill: "red", shape: "ring", text: "invalid configuration" } as NodeStatus);
+      }, 10);
+    }
+
+    const warnedUnused = new Set<string>();
+    /** Tell the user, once per deploy, that a message carries a property this node does not read. */
+    function warnUnusedProps(msg: any): void {
+      if (!plan) return;
+      const advice: Record<string, string> = {
+        tags: 'Ignoring msg.tags. Set Mode to "Dynamic" to take the tags from the message.',
+        scanRate: "Ignoring msg.scanRate. The scan rate is set in the editor.",
+      };
+      for (const name of plan.unusedProps(msg)) {
+        if (warnedUnused.has(name)) continue;
+        warnedUnused.add(name);
+        node.warn(advice[name]);
+      }
+    }
 
     /**
      * Rebind to a different endpoint.
@@ -96,7 +128,7 @@ module.exports = function (RED: any) {
       endpoint.register(node, { connect: false });
       if (endpoint.connected) {
         const tagNames = resolveTagNames();
-        if (tagNames.length > 0) {
+        if (tagNames.length > 0 && !(plan && plan.error)) {
           setupTags(tagNames);
           startScan();
         }
@@ -119,6 +151,10 @@ module.exports = function (RED: any) {
       // Documented at nodes/cip-subscribe.html but never implemented until now.
       extraActions: {
         start: (_msg: any, _send: any, done: any) => {
+          if (plan && plan.error) {
+            done(new Error(plan.error));
+            return;
+          }
           const tagNames = resolveTagNames();
           if (tagNames.length === 0) {
             done(new Error("No tags configured"));
@@ -136,6 +172,10 @@ module.exports = function (RED: any) {
           done();
         },
         restart: (_msg: any, _send: any, done: any) => {
+          if (plan && plan.error) {
+            done(new Error(plan.error));
+            return;
+          }
           stopScan();
           teardownTags();
           const tagNames = resolveTagNames();
@@ -150,25 +190,22 @@ module.exports = function (RED: any) {
       },
     };
 
-    /**
-     * Parse tag names from config string or msg override.
-     */
-    function resolveTagNames(input?: string): string[] {
-      const raw = input || node._configuredTags;
-      return parseTagList(raw);
+    /** The tags to scan, as a copy so a scan in progress is not changed under it. */
+    function resolveTagNames(): SubscribeTag[] {
+      return [...node._tags];
     }
 
     /**
      * Build Tag objects and add to a TagGroup for multi-tag reads.
      */
-    function setupTags(tagNames: string[]): void {
+    function setupTags(tagNames: SubscribeTag[]): void {
       teardownTags();
       const controller = node.endpoint.getController();
       if (!controller) return;
 
       const group = new TagGroup();
       const states: TagState[] = [];
-      for (const name of tagNames) {
+      for (const { name, alias } of tagNames) {
         try {
           // "MyArray[0..2]" is not a path the library accepts: read from the first element
           // for as many as the range holds, as cip-read does.
@@ -186,6 +223,7 @@ module.exports = function (RED: any) {
           group.add(tag);
           states.push({
             name,
+            alias,
             tag,
             lastValue: undefined,
             changed: false,
@@ -213,6 +251,7 @@ module.exports = function (RED: any) {
      */
     function startScan(): void {
       stopScan(); // bumps the generation, orphaning any cycle still in flight
+      if (plan && plan.error) return;
       const endpoint = node.endpoint;
       const controller = endpoint && endpoint.getController();
       if (!controller || node._tagStates.length === 0 || !node._tagGroup) return;
@@ -279,7 +318,7 @@ module.exports = function (RED: any) {
       if (states.length === 0) return;
 
       let anyChanged = false;
-      const tagDetails: Array<{ name: string; value: any; type: string; changed: boolean }> = [];
+      const tagDetails: Array<{ name: string; alias?: string; value: any; type: string; changed: boolean }> = [];
 
       for (const s of states) {
         const currentValue = s.tag.value;
@@ -302,6 +341,7 @@ module.exports = function (RED: any) {
 
         tagDetails.push({
           name: s.name,
+          ...(s.alias ? { alias: s.alias } : {}),
           value: currentValue,
           type: typeName,
           changed,
@@ -313,8 +353,8 @@ module.exports = function (RED: any) {
 
       const now = Date.now();
 
-      if (states.length === 1) {
-        // Single tag mode: payload = value directly
+      if (plan ? plan.output === "value" : states.length === 1) {
+        // One tag: payload = value directly
         const t = tagDetails[0];
         if (node.diffOnly && !t.changed) return;
         const msg: any = {
@@ -328,10 +368,36 @@ module.exports = function (RED: any) {
         };
         node.send(stampEndpoint(msg, endpoint));
       } else {
-        // Multi-tag mode: payload = object
-        const payload: Record<string, any> = {};
-        for (const t of tagDetails) {
-          payload[t.name] = t.value;
+        // Several tags: payload = an object keyed by alias or tag name (of values, or of
+        // results), or the array of results. A result names its tag as tagName, which is
+        // what cip-write takes.
+        const resultOf = (t: (typeof tagDetails)[number]) => ({
+          ...(t.alias ? { alias: t.alias } : {}),
+          tagName: t.name,
+          value: t.value,
+          type: t.type,
+          changed: t.changed,
+        });
+        let payload: any;
+        if (plan && plan.output === "array") {
+          payload = tagDetails.map(resultOf);
+        } else {
+          payload = {};
+          for (const t of tagDetails) {
+            let entry: any = t.value;
+            if (plan && plan.output === "keyresult") {
+              // The key says which tag, so the alias is not repeated inside the result
+              const { alias: _alias, ...rest } = resultOf(t) as any;
+              entry = rest;
+            }
+            // defineProperty so an alias of __proto__ is a key and not the prototype
+            Object.defineProperty(payload, t.alias || t.name, {
+              value: entry,
+              enumerable: true,
+              writable: true,
+              configurable: true,
+            });
+          }
         }
         const msg: any = {
           payload,
@@ -365,9 +431,17 @@ module.exports = function (RED: any) {
     // -- Connection lifecycle events --
 
     node.on("cip:connected", function () {
+      if (plan && plan.error) {
+        node.status({ fill: "red", shape: "ring", text: "invalid configuration" } as NodeStatus);
+        return;
+      }
       const tagNames = resolveTagNames();
       if (tagNames.length === 0) {
-        node.status({ fill: "yellow", shape: "ring", text: "no tags configured" } as NodeStatus);
+        node.status({
+          fill: "yellow",
+          shape: "ring",
+          text: plan && plan.mode === "dynamic" ? "waiting for tags" : "no tags configured",
+        } as NodeStatus);
         return;
       }
       setupTags(tagNames);
@@ -399,6 +473,27 @@ module.exports = function (RED: any) {
       }
       if (handleEndpointMsg(RED, node, msg, send, done, DYN)) return;
 
+      if (plan) {
+        warnUnusedProps(msg);
+        if (plan.mode === "dynamic" && !plan.error) {
+          const request = plan.resolveTags(msg);
+          if (request.kind === "error") {
+            node.error(request.error, msg);
+          } else if (request.kind === "none") {
+            if (!request.absent) node.warn(request.reason);
+          } else {
+            node._tags = request.tags;
+            if (node.endpoint.connected) {
+              stopScan();
+              setupTags(request.tags);
+              startScan();
+            }
+          }
+        }
+        if (done) done();
+        return;
+      }
+
       // Runtime override: change tag list
       if (msg.tags !== undefined) {
         const newTags = typeof msg.tags === "string"
@@ -409,10 +504,10 @@ module.exports = function (RED: any) {
                 .filter(Boolean)
             : [];
         if (newTags.length > 0) {
-          node._configuredTags = newTags.join(",");
+          node._tags = newTags.map((name: string) => ({ name }));
           if (node.endpoint.connected) {
             stopScan();
-            setupTags(newTags);
+            setupTags(node._tags);
             startScan();
           }
         }
