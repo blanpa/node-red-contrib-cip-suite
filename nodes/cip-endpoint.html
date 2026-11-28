@@ -99,6 +99,206 @@
      * the dialog half-built, where a property lookup on window just yields undefined and costs
      * the user nothing more than an inert Browse button.
      */
+    /**
+     * Focus a field with the caret at the end of its text, so a picked tag can be extended
+     * with an index such as [3]. A typed input shows its text in its own field, next to the
+     * hidden original, so that is the one to focus.
+     */
+    ns.focusEnd = function ($input) {
+      // After the dropdown has gone, or the removal of its focused filter box takes the focus.
+      setTimeout(function () {
+        var $shown = $input.nextAll(".red-ui-typedInput-container").first().find("input.red-ui-typedInput-input");
+        var el = ($shown.length ? $shown : $input)[0];
+        if (!el) {
+          return;
+        }
+        el.focus();
+        if (typeof el.setSelectionRange === "function") {
+          try {
+            el.setSelectionRange(el.value.length, el.value.length);
+          } catch (e) {
+            /* not a text field */
+          }
+        }
+      }, 0);
+    };
+
+    /** A msg typed input starts on a useful property name instead of empty. */
+    ns.defaultOnMsg = function ($input, property) {
+      $input.on("typedinputtypechange", function () {
+        if ($input.typedInput("type") === "msg" && !$input.typedInput("value")) {
+          $input.typedInput("value", property);
+        }
+      });
+    };
+
+    /** Browsing fills a string, so it is off for a tag that comes from msg or an env variable. */
+    ns.syncBrowse = function ($input, $button) {
+      function sync() {
+        var browsable = $input.typedInput("type") === "str";
+        $button
+          .prop("disabled", !browsable)
+          .attr("title", browsable ? "Browse tags from PLC" : "Browse is only available for a string tag");
+      }
+      $input.on("typedinputtypechange", sync);
+      sync();
+    };
+
+    /**
+     * A typed input that fills its field: types, the hidden input that stores the type, the
+     * type to start on. `options.msg` names the property a msg type starts on.
+     */
+    ns.typed = function ($input, options) {
+      $input.typedInput({ types: options.types, typeField: options.typeField, default: options.default });
+      $input.typedInput("width", "100%");
+      if (options.msg) {
+        ns.defaultOnMsg($input, options.msg);
+      }
+      return $input;
+    };
+
+    /**
+     * A tag cell for a list row: a typed input (str and env, plus whatever `types` adds), its
+     * Browse button, and the wiring that sets the tag from the picker. Returns the typed input.
+     */
+    ns.rowTag = function (browser, $input, $button, data, types) {
+      $input.typedInput({ types: types || ["str", "env"], default: data.tagNameType || "str" });
+      ns.defaultOnMsg($input, "payload");
+      $input.typedInput("width", "100%");
+      // A row is built before it is attached, so its width is measured again once it has a place
+      setTimeout(function () {
+        $input.typedInput("width", "100%");
+      }, 0);
+      $input.typedInput("type", data.tagNameType || "str");
+      $input.typedInput("value", data.tagName || "");
+      ns.syncBrowse($input, $button);
+      $button.on("click", function () {
+        if (!browser) {
+          RED.notify("Tag browse is unavailable: the cip-endpoint editor script did not load.", "warning");
+          return;
+        }
+        browser.browse(
+          $button,
+          function (name) {
+            $input.typedInput("type", "str");
+            $input.typedInput("value", name);
+            ns.focusEnd($input);
+          },
+          $input.typedInput("type") === "str" ? $input.typedInput("value") : ""
+        );
+      });
+      return $input;
+    };
+
+    /**
+     * The tag list of a Multiple style dialog: a sortable list with an add button.
+     *
+     * `options.addItem(row, data)` builds a row and returns the field to focus. The list grows
+     * with its rows up to the free space in the dialog and never below 150px, and the grip at
+     * its bottom right sets a height of the user's own, which then stays. The add button has an
+     * accesskey: Alt+T in Chrome and Edge, Alt+Shift+T in Firefox, Ctrl+Option+T on a Mac. Not
+     * A, since Node-RED binds a chord that starts with Alt+A. A browser does not mark the
+     * letter, so it is underlined here. `node._fitList` lets oneditresize refit the list.
+     */
+    ns.setupList = function (node, $list, options) {
+      var loading = true;
+      var label = options.label || "tag";
+      $list.css("min-height", "150px").editableList({
+        sortable: true,
+        removable: true,
+        addButton: "add " + label,
+        addItem: function (row, index, data) {
+          var $focus = options.addItem(row, data || {});
+          // A row added by the user is ready to type in. Rows added while the dialog loads are not.
+          if (!loading && $focus) {
+            setTimeout(function () {
+              if (row[0] && row[0].scrollIntoView) {
+                row[0].scrollIntoView({ block: "nearest" });
+              }
+              ns.focusEnd($focus);
+            }, 0);
+          }
+        }
+      });
+      $list.editableList("addItems", options.items || []);
+      loading = false;
+
+      var $box = $list.parent();
+      var userHeight = null;
+      var setHeight = 0;
+      var fit = function () {
+        if (!$box.is(":visible")) {
+          return;
+        }
+        var wanted = userHeight;
+        if (wanted === null) {
+          var free = node._freeHeight || 400;
+          wanted = Math.max(150, Math.min($list.outerHeight() + 16, free));
+        }
+        setHeight = Math.round(wanted);
+        $box.css("height", setHeight);
+      };
+      $box.on("mouseup", function () {
+        var now = $box.outerHeight();
+        if (Math.abs(now - setHeight) > 2) {
+          userHeight = now;
+          setHeight = now;
+        }
+      });
+      node._fitList = fit;
+      var fitSoon = function () {
+        setTimeout(fit, 0);
+      };
+      $list.on("click keyup", fitSoon);
+      var $add = $("#dialog-form " + (options.scope || ".cip-multiple") + " .red-ui-editableList-addButton");
+      $add.on("click", fitSoon);
+      $add
+        .attr({ accesskey: "t", title: "Add a " + label + " (accesskey T)" })
+        .empty()
+        .append('<i class="fa fa-plus"></i> ')
+        .append($("<span/>").html("add <u>t</u>" + label.slice(1)));
+      fitSoon();
+      return { fit: fit };
+    };
+
+    /** For oneditresize: what the dialog has left once every other row has taken its share. */
+    ns.fitFreeHeight = function (node, size, scope) {
+      scope = scope || ".cip-multiple";
+      var used = 0;
+      $("#dialog-form")
+        .children("div")
+        .each(function () {
+          var $row = $(this);
+          if ($row.is(":visible") && !$row.is(scope)) {
+            used += $row.outerHeight(true);
+          }
+        });
+      var other = 0;
+      $("#dialog-form " + scope)
+        .children()
+        .each(function () {
+          if (!$(this).find(".red-ui-editableList").length && !$(this).is(".red-ui-editableList")) {
+            other += $(this).outerHeight(true);
+          }
+        });
+      node._freeHeight = Math.max(150, size.height - used - other - 60);
+      if (node._fitList) {
+        node._fitList();
+      }
+    };
+
+    /**
+     * Run `callback` after the rows of a list have changed (added, removed, moved). Watches the
+     * list itself, since a removed row goes after the click that removed it has finished.
+     */
+    ns.onListChange = function ($list, callback) {
+      var pending = null;
+      new MutationObserver(function () {
+        clearTimeout(pending);
+        pending = setTimeout(callback, 0);
+      }).observe($list[0], { childList: true });
+    };
+
     ns.setupTagBrowse = function () {
       var $btn = $("#node-input-browse-btn");
       var $sel = $("#node-input-taglist");
@@ -108,16 +308,241 @@
       var $status = $("#node-input-browse-status");
       var $name = $("#node-input-tagName");
 
-      $btn.on("click", function () {
+      // Where a picked tag goes. The Browse button that loaded the list sets it, so one
+      // list serves the Tag Name field and any number of per-row buttons.
+      var pick = null;
+
+      var fillName = function (name) {
+        $name.val(name);
+        // A typed input keeps its own copy of the value and shows a picked tag as a str.
+        // On a plain input this throws, and the line above has already done the work.
+        try {
+          $name.typedInput("type", "str");
+          $name.typedInput("value", name);
+        } catch (e) {
+          /* not a typed input */
+        }
+        ns.focusEnd($name);
+      };
+
+      // A dialog with no inline tag list gets a dropdown under the Browse button instead.
+      var inline = $sel.length > 0;
+      var MAX_SHOWN = 300;
+      var $pop = null;
+
+      var closePop = function () {
+        if ($pop) {
+          $pop.remove();
+          $pop = null;
+        }
+        $(document).off(".cipTagPop");
+      };
+
+      /** Drop a filterable list of tags under `$anchor`. Choosing one calls `onPick(name)`. */
+      var showPop = function ($anchor, tags, onPick, current) {
+        closePop();
+        // Inside the tray, so it goes when the dialog does and is not clipped by the form.
+        var $host = $anchor.closest(".red-ui-tray");
+        $pop = $("<div/>", { class: "cip-tag-pop" }).appendTo($host.length ? $host : $(document.body));
+        var $filter = $("<input/>", {
+          type: "text",
+          class: "cip-tag-pop-filter",
+          placeholder: "Filter " + tags.length + " tags by name or type"
+        }).appendTo($pop);
+        var $list = $("<ul/>", { class: "cip-tag-pop-list" }).appendTo($pop);
+        var $note = $("<div/>", { class: "cip-tag-pop-note" }).appendTo($pop);
+        var rows = [];
+        var active = -1;
+
+        // What a tag is matched against: its name and its type, in full and with the
+        // punctuation taken out, so "em di 01" finds _IO_EM_DI_01 and "emdi01" does too.
+        // A space, underscore, dot or dash in the filter stands for one or more of those in
+        // the name, so "em di 01" finds _IO_EM_DI_01 and "st a" finds st_art but not _start.
+        // Anything else must match as typed, anywhere in the name. A word that starts the tag's
+        // type ("bool", "dint", "string" for SHORT_STRING) filters on the type instead.
+        var SEP = /[\s_.\-]+/;
+        var namePattern = function (words) {
+          if (!words.length) {
+            return null;
+          }
+          return new RegExp(
+            words
+              .join(" ")
+              .split(SEP)
+              .map(function (part) {
+                return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              })
+              .join("[^a-z0-9]+")
+          );
+        };
+        var isTypeWord = function (type, word) {
+          return word.length > 1 && type.split("_").concat(type).some(function (token) {
+            return token.indexOf(word) === 0;
+          });
+        };
+        var haystacks = tags.map(function (t) {
+          return {
+            name: String(t.name).toLowerCase(),
+            type: typeof t.type === "string" ? t.type.toLowerCase() : ""
+          };
+        });
+        var matches = function (words, index) {
+          var h = haystacks[index];
+          var whole = namePattern(words);
+          if (whole.test(h.name)) {
+            return true;
+          }
+          var rest = words.filter(function (word) {
+            return !isTypeWord(h.type, word);
+          });
+          if (rest.length === words.length) {
+            return false;
+          }
+          var pattern = namePattern(rest);
+          return !pattern || pattern.test(h.name);
+        };
+
+        var setActive = function (index) {
+          $list.children(".active").removeClass("active");
+          active = rows.length ? Math.max(0, Math.min(index, rows.length - 1)) : -1;
+          if (active >= 0) {
+            var li = $list.children().eq(active).addClass("active")[0];
+            if (li && li.scrollIntoView) {
+              li.scrollIntoView({ block: "nearest" });
+            }
+          }
+        };
+        var choose = function (name) {
+          closePop();
+          if (onPick) {
+            onPick(name);
+          }
+        };
+        // The first list shows the field's current tag, if the controller has it, in view and
+        // selected. Later renders follow the filter.
+        var showCurrent = typeof current === "string" && current !== "";
+        var render = function () {
+          var words = $.trim($filter.val()).toLowerCase().split(/[\s,]+/).filter(Boolean);
+          var found = tags.filter(function (t, index) {
+            return !words.length || matches(words, index);
+          });
+          var from = 0;
+          var currentAt = -1;
+          if (showCurrent && !words.length) {
+            found.some(function (t, index) {
+              if (t.name === current) {
+                currentAt = index;
+                return true;
+              }
+              return false;
+            });
+            if (currentAt >= MAX_SHOWN) {
+              from = Math.max(0, Math.min(currentAt - 50, found.length - MAX_SHOWN));
+            }
+          }
+          rows = found.slice(from, from + MAX_SHOWN);
+          $list.empty();
+          rows.forEach(function (t) {
+            // The type helps you pick a tag and is never part of the value. A controller
+            // reports types the Data Type list does not offer (SINT, LINT, LREAL, UDT
+            // template names), so it stays advisory.
+            var $li = $("<li/>").data("name", t.name).appendTo($list);
+            $("<span/>", { class: "cip-tag-pop-name" }).text(t.name).appendTo($li);
+            if (t.type && typeof t.type === "string") {
+              $("<span/>", { class: "cip-tag-pop-type" }).text(t.type).appendTo($li);
+            }
+          });
+          $note
+            .text(
+              !found.length
+                ? tags.length
+                  ? "No tags match"
+                  : "No tags found"
+                : found.length > MAX_SHOWN
+                  ? "Showing " + MAX_SHOWN + " of " + found.length + ". Type to narrow."
+                  : ""
+            )
+            .toggle(!rows.length || found.length > MAX_SHOWN);
+          if (currentAt >= 0) {
+            setActive(currentAt - from);
+            var li = $list.children(".active")[0];
+            if (li) {
+              var offset = li.getBoundingClientRect().top - $list[0].getBoundingClientRect().top;
+              $list[0].scrollTop += offset - ($list[0].clientHeight - li.offsetHeight) / 2;
+            }
+          } else {
+            setActive(0);
+          }
+          showCurrent = false;
+        };
+
+        $list.on("mousedown", "li", function (e) {
+          e.preventDefault();
+          choose($(this).data("name"));
+        });
+        $filter.on("input", render);
+        $filter.on("keydown", function (e) {
+          // These keys are handled here. Left to bubble, the editor's key handler runs after
+          // Enter has removed this box and fails on the detached target.
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            e.stopPropagation();
+            setActive(active + (e.key === "ArrowDown" ? 1 : -1));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            if (active >= 0) {
+              choose(rows[active].name);
+            }
+          } else if (e.key === "Escape") {
+            // Only close the dropdown, not the edit dialog behind it.
+            e.preventDefault();
+            e.stopPropagation();
+            closePop();
+          }
+        });
+        $(document).on("mousedown.cipTagPop", function (e) {
+          if (!$pop || !$.contains(document.documentElement, $pop[0])) {
+            closePop();
+          } else if (!$(e.target).closest($pop).length && !$(e.target).closest($anchor).length) {
+            closePop();
+          }
+        });
+
+        // Under the button with its right edge on the button's, since the button sits at the
+        // right of its field, and kept inside the tray. Above it when there is no room below.
+        var a = $anchor[0].getBoundingClientRect();
+        var bounds = $host.length ? $host[0].getBoundingClientRect() : { left: 0, right: window.innerWidth };
+        var width = Math.min(360, bounds.right - bounds.left - 12);
+        $pop.css({ width: width, left: Math.max(bounds.left + 6, Math.min(a.right - width, bounds.right - width - 6)) });
+        var below = window.innerHeight - a.bottom;
+        var need = Math.min(340, $pop.outerHeight());
+        if (below < need + 12 && a.top > below) {
+          $pop.css({ bottom: window.innerHeight - a.top + 2, top: "auto" });
+        } else {
+          $pop.css({ top: a.bottom + 2 });
+        }
+        render();
+        $filter.trigger("focus");
+      };
+
+      /** Load the controller's tags. `onPick(name)` receives the chosen tag. */
+      var load = function ($button, onPick, current) {
         var endpointId = $("#node-input-endpoint").val();
         if (!endpointId || endpointId === "_ADD_") {
           RED.notify("Select and deploy an endpoint first.", "warning");
           return;
         }
-        $btn.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
+        pick = onPick;
+        closePop();
+        $button.prop("disabled", true).find("i").removeClass("fa-search").addClass("fa-spinner fa-spin");
         $status.text("Loading...");
         $.getJSON("cip-endpoint/" + endpointId + "/browse")
           .done(function (tags) {
+            if (!inline) {
+              showPop($button, tags, onPick, current);
+              return;
+            }
             $sel.empty();
             if (!tags.length) {
               $sel.append('<option disabled>No tags found</option>');
@@ -128,7 +553,7 @@
                 // A controller reports types this dialog's Data Type list does not offer
                 // (SINT, LINT, LREAL, UDT template names), so it stays advisory and Data
                 // Type is left on Auto-detect.
-                var label = t.name + (t.type ? "  (" + t.type + ")" : "");
+                var label = t.name + (t.type && typeof t.type === "string" ? "  (" + t.type + ")" : "");
                 $sel.append($("<option>").val(t.name).text(label));
               });
               $status.text(tags.length + " tags");
@@ -140,21 +565,27 @@
             $status.text("");
           })
           .always(function () {
-            $btn.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
+            $button.prop("disabled", false).find("i").removeClass("fa-spinner fa-spin").addClass("fa-search");
           });
-      });
+      };
 
-      // cip-browse lists tags as its own output and has no field to fill.
-      if (!$name.length) {
-        return;
-      }
+      // cip-browse lists tags as its own output and has no field to fill, so it picks nothing.
+      $btn.on("click", function () {
+        var current = "";
+        try {
+          current = $name.typedInput("type") === "str" ? $name.typedInput("value") : "";
+        } catch (e) {
+          current = $name.val() || "";
+        }
+        load($btn, $name.length ? fillName : null, current);
+      });
 
       var apply = function (collapse) {
         var name = $sel.val();
-        if (!name) {
+        if (!name || !pick) {
           return;
         }
-        $name.val(name);
+        pick(name);
         if (collapse) {
           $row.slideUp(200);
         }
@@ -165,14 +596,127 @@
       $sel.on("dblclick", function () {
         apply(true);
       });
+
+      // For a node with its own Browse buttons, such as one per row of a list.
+      return { browse: load };
     };
   })();
 </script>
 
 <style>
+  /* The tag dropdown under a Browse button, see setupTagBrowse(). It is fixed to the
+     viewport and sits inside the edit tray, so the form's overflow does not clip it. */
+  .cip-tag-pop {
+    position: fixed;
+    z-index: 20;
+    box-sizing: border-box;
+    padding: 6px;
+    background: var(--red-ui-secondary-background, #fff);
+    border: 1px solid var(--red-ui-primary-border-color, #bbb);
+    border-radius: 4px;
+    box-shadow: 0 4px 14px var(--red-ui-shadow, rgba(0, 0, 0, 0.25));
+  }
+  .cip-tag-pop .cip-tag-pop-filter {
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0 0 6px 0;
+  }
+  .cip-tag-pop-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .cip-tag-pop-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 6px;
+    cursor: pointer;
+    font-family: var(--red-ui-monospace-font, monospace);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .cip-tag-pop-list li:hover,
+  .cip-tag-pop-list li.active {
+    background: var(--red-ui-list-item-background-hover, #e6e6e6);
+  }
+  /* The hover colour is close to the row colour in the dark theme, so mark the active row too. */
+  .cip-tag-pop-list li.active {
+    box-shadow: inset 3px 0 0 var(--red-ui-text-color-link, #0088cc);
+  }
+  .cip-tag-pop-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cip-tag-pop-type {
+    flex: none;
+    opacity: 0.6;
+  }
+  .cip-tag-pop-note {
+    padding: 4px 6px 0;
+    font-size: 12px;
+    opacity: 0.7;
+  }
+
   /* The labels are too long and wrap poorly! */
   .form-row.form-row-130 label {
     width: 130px;
+  }
+
+  /* Stock fields are 70% wide after a 100px label. Match that so every control ends at the
+     same edge at any tray width. A typed input sizes itself from its element when it is built
+     and comes out narrower than its wrapper, so its container is pinned to the wrapper. */
+  .cip-field {
+    display: inline-block;
+    width: 70%;
+    vertical-align: middle;
+  }
+  .cip-field .red-ui-typedInput-container,
+  .cip-row-tagbox .red-ui-typedInput-container,
+  #node-input-tagList-container .red-ui-typedInput-container {
+    width: 100% !important;
+  }
+  /* Grip at the bottom right to size the list. */
+  .cip-multiple .red-ui-editableList-container {
+    resize: vertical;
+    overflow-y: auto;
+    min-height: 100px;
+  }
+  /* With a Browse button the typed input and the button share the 70%. */
+  .cip-field-browse {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .cip-field-typed {
+    flex: 1;
+    min-width: 0;
+  }
+  /* A tip wraps inside its row. contain stops its text from setting the minimum width of the
+     edit tray, and overflow-wrap breaks a long unbroken word instead of overflowing. */
+  #dialog-form .form-tips.cip-tip {
+    box-sizing: border-box;
+    /* Under a field: the same left edge and the same 70% as the controls above it. */
+    width: 70%;
+    max-width: none;
+    margin: 4px 0 0 104px;
+    contain: inline-size;
+    overflow-wrap: anywhere;
+  }
+  /* Under the list: the list's own edges. */
+  #dialog-form .form-tips.cip-legacy {
+    box-sizing: border-box;
+    contain: inline-size;
+    overflow-wrap: anywhere;
+    max-width: none;
+    margin-bottom: 14px;
+    border-left: 4px solid #e8a800;
+  }
+  #dialog-form .form-tips.cip-tip-wide {
+    width: auto;
+    margin: 4px 6px 0 6px;
   }
 </style>
 

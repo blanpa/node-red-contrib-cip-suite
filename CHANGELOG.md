@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **cip-read** - **Upgrade.** A node saved before this version keeps working as it did. The editor
+  shows it with a "Legacy mode" note and an **Upgrade** button, and saving it without upgrading
+  changes nothing. Upgrading turns on the new form: a **Mode** of UI (a list of tags, each with an
+  optional alias, a data type and a size, and a tag that can be a string, an environment variable or a
+  message property) or Dynamic (the tags come from a message property, `msg.tags` by default). Nothing
+  else in a message changes what is read, so no hidden message property can override the form. A node
+  with one tag keeps its output after an upgrade. One that read `msg.tags` should use Dynamic mode, and its
+  output changes shape.
+- **cip-read** - **Output** is Value (the value as `msg.payload`, for exactly one tag), Key Value pairs
+  (`{ alias: value }`, where any failing tag stops the whole read), Key Result pairs
+  (`{ alias: { tagName, value, type } }`) or Array of results (per tag errors are kept in both, as before,
+  with the alias beside each value in the array). Keys are literal: the alias, or the tag exactly as written.
+- **cip-read** - **Poll** is None, a number or an environment variable. An invalid configuration is
+  reported once and stops the poll, and a tag the PLC rejects is reported the first time while polling
+  goes on.
+
 ## 0.2.3 — 2026-11-24
 
 Thanks to [@Steve-Mcl](https://github.com/Steve-Mcl) for most of this release: the reports

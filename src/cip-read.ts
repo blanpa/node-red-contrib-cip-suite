@@ -30,6 +30,7 @@ import {
   cipErrorFields,
 } from "./utils";
 import { ArraySizeCache, resolveArrayLength } from "./tag-array";
+import { ReadPlan, ReadRequest, buildReadPlan, entryKey } from "./read-plan";
 import {
   DynOpts,
   MsgEndpoint,
@@ -49,7 +50,32 @@ module.exports = function (RED: any) {
     node.tagName = config.tagName || "";
     node.dataType = config.dataType || "auto";
     node.pollInterval = parseInt(config.pollInterval, 10) || 0;
+
+    // An upgraded node reads what its tag list (or the message property it names) says and
+    // nothing else. One that has not been upgraded has no plan and behaves as it always did.
+    const plan: ReadPlan | null = buildReadPlan(config, (value, type, msg) =>
+      RED.util.evaluateNodeProperty(value, type, node, msg)
+    );
+    if (plan) {
+      // These fields belong to the original node and mean nothing once it is upgraded
+      node.tagName = "";
+      node.dataType = "auto";
+      node.pollInterval = 0;
+      if (plan.error) {
+        node.error(plan.error);
+      } else if (plan.poll.error) {
+        node.error(plan.poll.error);
+      } else if (plan.poll.interval > 0) {
+        if (plan.dynamic) {
+          node.warn("Poll interval ignored: a message supplies a tag, so there is nothing to read on a timer");
+        } else {
+          node.pollInterval = plan.poll.interval;
+        }
+      }
+    }
     node._pollTimer = null as ReturnType<typeof setInterval> | null;
+    /** The last failure a poll reported, so a tag that stays unreadable is reported once. */
+    node._lastPollError = null as string | null;
     node._reading = false;
     // Array lengths are a property of the running controller program, so the
     // memo is dropped whenever the connection is re-established.
@@ -394,6 +420,86 @@ module.exports = function (RED: any) {
       return results;
     }
 
+    const UNUSED_PROP_ADVICE: Record<string, string> = {
+      tags: 'Ignoring msg.tags. Set Tags from to "Dynamic" and the property to msg.tags to read the tags from the message.',
+    };
+    const warnedUnused = new Set<string>();
+
+    /**
+     * Tell the user, once per deploy, that a message carries a property this node does not
+     * read, so a flow that relied on msg.tags overriding the node does not just change.
+     */
+    function warnUnusedProps(triggerMsg: any): void {
+      if (!plan) return;
+      for (const name of plan.unusedProps(triggerMsg)) {
+        if (warnedUnused.has(name)) continue;
+        warnedUnused.add(name);
+        node.warn(UNUSED_PROP_ADVICE[name]);
+      }
+    }
+
+    /**
+     * What to read for a node that has not been upgraded: the message can override the
+     * node, as it always could. Left exactly as it was so deployed flows do not change.
+     */
+    function legacyRequest(triggerMsg?: any): ReadRequest {
+      // msg.tags (an array, or a comma separated string) wins over the configured Tag Name.
+      const batchTags = triggerMsg?.tags;
+      if (Array.isArray(batchTags) || (typeof batchTags === "string" && batchTags.trim() !== "")) {
+        return { kind: "batch", entries: parseBatchTags(batchTags), source: "msg.tags" };
+      }
+
+      const tag = (triggerMsg && triggerMsg.tagName) || node.tagName;
+      if (!tag) return { kind: "none", reason: "No tag name specified" };
+
+      return {
+        kind: "single",
+        tag,
+        dataType: triggerMsg?.dataType,
+        arraySize: triggerMsg?.arraySize != null ? parseInt(String(triggerMsg.arraySize), 10) : undefined,
+      };
+    }
+
+    /**
+     * The payload for a batch read of an upgraded node. Key Value output stops at the first
+     * sign of trouble, since a half filled object would look like a good read. Array and Key
+     * Result output keep a per tag error, so one missing tag does not stop the rest being read.
+     */
+    function shapeBatch(
+      results: MultiTagResult[],
+      entries: BatchEntry[]
+    ): { payload: any; failure?: undefined } | { payload?: undefined; failure: Error } {
+      if (!plan) return { payload: results };
+      if (plan.output === "array") {
+        return { payload: results.map((r, i) => (entries[i]?.alias ? { alias: entries[i].alias, ...r } : r)) };
+      }
+      /** An object with a key for each result. defineProperty so an alias of __proto__ is a key. */
+      const keyed = (valueOf: (r: MultiTagResult) => any): Record<string, any> => {
+        const payload: Record<string, any> = {};
+        results.forEach((r, i) => {
+          Object.defineProperty(payload, entryKey(entries[i]), {
+            value: valueOf(r),
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        });
+        return payload;
+      };
+      if (plan.output === "keyresult") return { payload: keyed((r) => r) };
+      const failed = results.filter((r) => r.error);
+      if (failed.length > 0) {
+        return {
+          failure: new Error(
+            `Read failed for ${failed.length} of ${results.length} tags. ${failed
+              .map((r) => `${r.tagName}: ${r.error}`)
+              .join("; ")}`
+          ),
+        };
+      }
+      return { payload: keyed((r) => r.value) };
+    }
+
     /**
      * Read the configured tag and send the result.
      */
@@ -411,6 +517,31 @@ module.exports = function (RED: any) {
       };
       /** Which PLC answered. Only stamped when the endpoint opts in, so static output is unchanged. */
       const stamp = (msg: any): any => stampEndpoint(msg, endpoint);
+      /**
+       * A poll has no message, so what it reads is fixed by the node's configuration. If that is
+       * invalid, every later poll would fail the same way, so report it once and stop polling.
+       * Polling starts again the next time the endpoint connects.
+       */
+      const invalidConfig = (message: string): void => {
+        if (!triggerMsg && typeof done !== "function") {
+          stopPolling();
+          message += " Polling stopped.";
+        }
+        settle(new Error(message));
+      };
+      /**
+       * Report a failed read. Polling goes on, since the tag may be created or the PLC may
+       * recover, but the same failure is only reported the first time. The status line keeps
+       * showing it.
+       */
+      const failRead = (failure: Error): void => {
+        // Only an upgraded node de-duplicates. A legacy node reports every failed poll, as it always did.
+        if (plan && !triggerMsg && typeof done !== "function") {
+          if (node._lastPollError === failure.message) return;
+          node._lastPollError = failure.message;
+        }
+        settle(failure);
+      };
 
       if (node._reading) {
         settle();
@@ -419,31 +550,50 @@ module.exports = function (RED: any) {
 
       node._reading = true;
       try {
-        // msg.tags (an array, or a comma separated string) wins over the configured Tag Name.
-        const batchTags = triggerMsg?.tags;
-        if (
-          Array.isArray(batchTags) ||
-          (typeof batchTags === "string" && batchTags.trim() !== "")
-        ) {
+        if (triggerMsg) warnUnusedProps(triggerMsg);
+        const request = plan ? plan.resolve(triggerMsg) : legacyRequest(triggerMsg);
+
+        if (request.kind === "none") {
+          node.warn(request.reason);
+          settle();
+          return;
+        }
+        if (request.kind === "error") {
+          node.status({ fill: "red", shape: "ring", text: "invalid input" });
+          invalidConfig(request.error);
+          return;
+        }
+
+        if (request.kind === "batch") {
           // A malformed entry is a flow bug, so nothing is read until every entry is valid.
-          const entries = parseBatchTags(batchTags);
+          const entries = request.entries;
           const invalid = entries.filter((e) => e.error);
           if (invalid.length > 0) {
-            node.status({ fill: "red", shape: "ring", text: "invalid msg.tags" });
-            settle(new Error(`Invalid msg.tags, nothing was read. ${invalid.map((e) => e.error).join("; ")}`));
+            node.status({ fill: "red", shape: "ring", text: `invalid ${request.source}` });
+            invalidConfig(`Invalid ${request.source}, nothing was read. ${invalid.map((e) => e.error).join("; ")}`);
             return;
           }
 
           const { result: batchResult, elapsed } = await withTiming(() =>
             readBatch(entries, endpoint)
           );
-          const msg: any = {
-            payload: batchResult,
-            timestamp: Date.now(),
-            _msgid: triggerMsg._msgid,
-            topic: triggerMsg.topic,
-          };
           const failed = batchResult.filter((r) => r.error).length;
+          const shaped = shapeBatch(batchResult, entries);
+          if (shaped.failure) {
+            node.status({
+              fill: "red",
+              shape: "ring",
+              text: `${failed} of ${batchResult.length} tags failed (${elapsed}ms)`,
+            });
+            failRead(shaped.failure);
+            return;
+          }
+          const msg: any = {
+            payload: shaped.payload,
+            timestamp: Date.now(),
+            _msgid: triggerMsg?._msgid,
+            topic: triggerMsg?.topic,
+          };
           node.status({
             fill: failed > 0 ? "yellow" : "green",
             shape: "dot",
@@ -453,25 +603,13 @@ module.exports = function (RED: any) {
                 : `${batchResult.length} tags read (${elapsed}ms)`,
           });
           node.send(stamp(msg));
+          node._lastPollError = null;
           settle();
           return;
         }
 
-        const tag = (triggerMsg && triggerMsg.tagName) || node.tagName;
-        if (!tag) {
-          node.warn("No tag name specified");
-          settle();
-          return;
-        }
-
-        const readOptions = {
-          dataType: triggerMsg?.dataType,
-          arraySize:
-            triggerMsg?.arraySize != null
-              ? parseInt(String(triggerMsg.arraySize), 10)
-              : undefined,
-        };
-
+        const tag = request.tag;
+        const readOptions = { dataType: request.dataType, arraySize: request.arraySize };
 
         const { result, elapsed } = await withTiming(() =>
           readSingleTag(tag, readOptions, endpoint)
@@ -510,10 +648,11 @@ module.exports = function (RED: any) {
           text: `${tag} = ${displayValue} (${elapsed}ms)`,
         });
         node.send(stamp(msg));
+        node._lastPollError = null;
         settle();
       } catch (err: any) {
         node.status({ fill: "red", shape: "ring", text: describeCipError(err) });
-        settle(toCipError(err, "Read failed"));
+        failRead(toCipError(err, "Read failed"));
       } finally {
         node._reading = false;
       }
@@ -536,6 +675,7 @@ module.exports = function (RED: any) {
     node.on("cip:connected", function () {
       node.status(STATUS.connected(endpointLabel(node)));
       node._arraySizes.clear();
+      node._lastPollError = null;
       startPolling();
     });
 

@@ -5,6 +5,15 @@
     defaults: {
       name: { value: "" },
       endpoint: { value: "", type: "cip-endpoint", required: true },
+      // Only set once the node has been upgraded. A node saved before that has none of these
+      // (Node-RED does not fill in defaults for a property the saved node lacks), and a node
+      // without a mode runs exactly as it always did.
+      mode: { value: "ui" },
+      tagList: { value: [] },
+      tagsProp: { value: "tags" },
+      output: { value: "value" },
+      pollIntervalType: { value: "none" },
+      // Kept for nodes that have not been upgraded
       tagName: { value: "" },
       dataType: { value: "auto" },
       pollInterval: { value: 0 }
@@ -14,15 +23,281 @@
     icon: "cip.svg",
     paletteLabel: "cip read",
     label: function () {
-      return this.name || this.tagName || "cip read";
+      if (this.name) {
+        return this.name;
+      }
+      if (this.mode === undefined || this.mode === "") {
+        return this.tagName || "cip read";
+      }
+      if (this.mode === "dynamic") {
+        return "tags from msg." + (this.tagsProp || "tags");
+      }
+      var rows = this.tagList || [];
+      if (rows.length === 1) {
+        var only = rows[0] || {};
+        return only.alias || only.tagName || "cip read";
+      }
+      return rows.length + " tags";
     },
     oneditprepare: function () {
-      // Guarded, see the note on setupTagBrowse in cip-endpoint.html.
-      if (window.cipSuiteEditor) {
-        window.cipSuiteEditor.setupTagBrowse();
+      var node = this;
+      var ns = window.cipSuiteEditor;
+      // Nodes that have not been upgraded have no mode.
+      var upgraded = !(node.mode === undefined || node.mode === "");
+
+      var $mode = $("#cip-read-mode");
+      var $output = $("#cip-read-output");
+      var $list = $("#cip-read-list");
+      var $tagsProp = $("#cip-read-tagsprop");
+      var $poll = $("#cip-read-poll");
+
+      var rowDataTypes = ["auto", "BOOL", "INT", "DINT", "REAL", "STRING", "STRUCT", "ARRAY"];
+      var pollTypes = [{ value: "none", label: "None", hasValue: false }, "num"];
+      var upgradedPollTypes = pollTypes.concat(["env"]);
+      var legacyRowTypes = ["str"];
+      var upgradedRowTypes = ["str", "msg", "env"];
+
+      ns.typed($tagsProp, { types: ["msg"], default: "msg" });
+      ns.typed($poll, { types: upgraded ? upgradedPollTypes : pollTypes, default: "none" });
+
+      var rows;
+      if (upgraded) {
+        $mode.val(node.mode);
+        $output.val(node.output || "keyvalue");
+        $tagsProp.typedInput("value", node.tagsProp || "tags");
+        var type = node.pollIntervalType || "none";
+        $poll.typedInput("type", type);
+        if (type !== "none") {
+          $poll.typedInput("value", node.pollInterval);
+        }
+        rows = node.tagList && node.tagList.length ? node.tagList : [{}];
       } else {
-        console.warn("cip-suite: tag browse unavailable, cip-endpoint's editor script did not load");
+        // What the node already has becomes the first row. An empty tag name meant the tag came
+        // from msg.tagName, which the banner says is still the case until it is upgraded.
+        $mode.val("ui");
+        $output.val("value");
+        $tagsProp.typedInput("value", "tags");
+        var interval = parseInt(node.pollInterval, 10);
+        if (interval > 0) {
+          $poll.typedInput("type", "num");
+          $poll.typedInput("value", interval);
+        } else {
+          $poll.typedInput("type", "none");
+        }
+        var oldType = rowDataTypes.indexOf(node.dataType) > -1 ? node.dataType : "auto";
+        rows = [{ tagName: node.tagName || "", tagNameType: "str", dataType: oldType }];
       }
+
+      var browser = ns.setupTagBrowse();
+
+      ns.setupList(node, $list, {
+        items: rows,
+        addItem: function (row, data) {
+          var line = $("<div/>", { style: "display:flex; gap:4px; align-items:center;" }).appendTo(row);
+          var rowAlias = $("<input/>", {
+            type: "text",
+            class: "cip-row-alias",
+            placeholder: "alias",
+            title: "Alias (optional): the key of the tag in the result",
+            style: "flex:0 1 90px; width:90px; min-width:40px; margin:0; box-sizing:border-box;"
+          }).appendTo(line);
+          var tagBox = $("<div/>", { class: "cip-row-tagbox", style: "flex:1 1 120px; min-width:60px;" }).appendTo(line);
+          var rowTag = $("<input/>", { type: "text", class: "cip-row-tag" }).appendTo(tagBox);
+          var rowBrowse = $("<button/>", {
+            type: "button",
+            class: "red-ui-button cip-row-browse",
+            title: "Browse tags from PLC",
+            style: "margin:0; flex:0 0 auto;"
+          })
+            .append('<i class="fa fa-search"></i>')
+            .appendTo(line);
+          var rowType = $("<select/>", {
+            class: "cip-row-datatype",
+            title: "Data type",
+            style: "flex:0 0 auto; width:80px; margin:0;"
+          }).appendTo(line);
+          rowDataTypes.forEach(function (o) {
+            rowType.append($("<option/>").val(o).text(o === "auto" ? "Auto" : o));
+          });
+          var rowSize = $("<input/>", {
+            type: "number",
+            min: 1,
+            class: "cip-row-arraysize",
+            placeholder: "size",
+            title: "Array size, empty finds the length",
+            style: "flex:0 0 auto; width:60px; margin:0; box-sizing:border-box;"
+          }).appendTo(line);
+
+          ns.rowTag(browser, rowTag, rowBrowse, data, upgraded ? upgradedRowTypes : legacyRowTypes);
+          rowType.val(data.dataType || "auto");
+          rowSize.val(data.arraySize === undefined || data.arraySize === null ? "" : data.arraySize);
+          rowAlias.val(data.alias || "");
+
+          function showSize() {
+            rowSize.toggle(rowType.val() === "ARRAY");
+          }
+          rowType.on("change", showSize);
+          showSize();
+          return rowAlias;
+        }
+      });
+
+      // Output: Value is only for exactly one tag
+      function rowCount() {
+        return $list.editableList("length");
+      }
+      function dynamic() {
+        return $mode.val() === "dynamic";
+      }
+      function hasMsgRow() {
+        var found = false;
+        $list.editableList("items").each(function () {
+          if ($(this).find(".cip-row-tag").typedInput("type") === "msg") {
+            found = true;
+          }
+        });
+        return found;
+      }
+      var OUTPUT_TIPS = {
+        legacy: "Legacy output: the value for one tag, an array of results when msg.tags is used. Upgrade to choose.",
+        value: "payload is the value of the tag. msg.tagName and msg.dataType say which tag and its type.",
+        keyvalue: "payload is { key: value }. The key is the alias, or the tag as written. Any tag that fails stops the whole read.",
+        keyresult: "payload is { key: { tagName, value, type } }. A tag that fails has an error in place of its value, the rest are still read.",
+        array: "payload is an array of { alias, tagName, value, type }, one per tag. A tag that fails has an error in place of its value, the rest are still read."
+      };
+      function syncOutput() {
+        var canValue = !dynamic() && rowCount() === 1;
+        $output.find("option[value=value]").prop("disabled", !canValue);
+        // The native value: jQuery's val() skips a disabled option and would say there is none
+        if (!canValue && $output[0].value === "value") {
+          $output.val("keyvalue");
+        }
+        $("#cip-read-output-tip").text(OUTPUT_TIPS[$output[0].value] || "");
+      }
+
+      function refresh() {
+        var isDynamic = dynamic();
+        $(".cip-multiple").toggle(!isDynamic);
+        $(".cip-msg").toggle(isDynamic);
+        // A poll tick has no message, so there is nothing to read when one supplies the tags
+        var noPoll = isDynamic || hasMsgRow();
+        $("#cip-read-poll-row").toggle(!noPoll);
+        syncOutput();
+      }
+      $mode.on("change", refresh);
+      $output.on("change", syncOutput);
+      // Rows added or removed change what Output can be. A tag that becomes a message property
+      // changes whether the node can poll.
+      ns.onListChange($list, refresh);
+      $list.on("change typedinputtypechange", function () {
+        setTimeout(refresh, 0);
+      });
+      refresh();
+
+      // The upgrade. Until then the node is the one that was deployed, with the new form shown
+      // but switched off, so saving changes nothing.
+      var $add = $("#dialog-form .cip-multiple .red-ui-editableList-addButton");
+      $add.parent()[0].addEventListener(
+        "click",
+        function (event) {
+          if (!upgraded && $(event.target).closest(".red-ui-editableList-addButton").length) {
+            event.stopPropagation();
+            event.preventDefault();
+          }
+        },
+        true
+      );
+      function setUpgraded(on) {
+        upgraded = on;
+        $("#cip-read-legacy").toggle(!on);
+        $mode.prop("disabled", !on);
+        $output.prop("disabled", !on);
+        if (on) {
+          $output.find("option[value=legacy]").remove();
+        } else {
+          $output[0].value = "legacy";
+        }
+        $(".cip-row-alias, .cip-row-arraysize").prop("disabled", !on);
+        $(".cip-row-alias").attr("title", on ? "" : "Upgrade to enable");
+        $add.toggleClass("disabled", !on).css("opacity", on ? "" : "0.5");
+        $add.attr("title", on ? "Add a tag (accesskey T)" : "Upgrade to enable");
+        $output.attr("title", on ? "" : "Upgrade to enable");
+        $mode.attr("title", on ? "" : "Upgrade to enable");
+        $(".cip-row-tag").typedInput("types", on ? upgradedRowTypes : legacyRowTypes);
+        $poll.typedInput("types", on ? upgradedPollTypes : pollTypes);
+      }
+      $("#cip-read-upgrade").on("click", function () {
+        // An empty tag name meant the tag came from msg.tagName, so it still does
+        var $first = $list.editableList("items").first().find(".cip-row-tag");
+        setUpgraded(true);
+        $output[0].value = rowCount() === 1 ? "value" : "keyvalue";
+        if ($first.length && !$first.typedInput("value")) {
+          $first.typedInput("type", "msg");
+          $first.typedInput("value", "tagName");
+        }
+        refresh();
+      });
+      setUpgraded(upgraded);
+      refresh();
+    },
+    oneditresize: function (size) {
+      window.cipSuiteEditor.fitFreeHeight(this, size);
+    },
+    oneditsave: function () {
+      var node = this;
+      var upgraded = $("#cip-read-legacy").is(":hidden");
+
+      var rows = [];
+      $("#cip-read-list")
+        .editableList("items")
+        .each(function () {
+          var row = $(this);
+          var tagInput = row.find(".cip-row-tag");
+          var dataType = row.find(".cip-row-datatype").val();
+          rows.push({
+            tagName: tagInput.typedInput("value"),
+            tagNameType: tagInput.typedInput("type"),
+            alias: row.find(".cip-row-alias").val().trim(),
+            dataType: dataType,
+            arraySize: dataType === "ARRAY" ? row.find(".cip-row-arraysize").val() : ""
+          });
+        });
+
+      var $poll = $("#cip-read-poll");
+      var pollType = $poll.typedInput("type");
+      var noPoll = $("#cip-read-poll-row").is(":hidden");
+
+      if (!upgraded) {
+        // Not upgraded: write back only what the original node has, and leave the rest unset
+        // so the node stays as it was.
+        var first = rows[0] || {};
+        node.tagName = first.tagNameType === "str" ? first.tagName : "";
+        // A data type the list does not have is kept unless the row was changed
+        var keep = ["auto", "BOOL", "INT", "DINT", "REAL", "STRING", "STRUCT", "ARRAY"].indexOf(node.dataType) < 0;
+        if (!(keep && first.dataType === "auto")) {
+          node.dataType = first.dataType || "auto";
+        }
+        var legacyInterval = parseInt($poll.typedInput("value"), 10);
+        node.pollInterval = pollType === "num" && legacyInterval > 0 ? legacyInterval : 0;
+        // The editor would otherwise fill these from the defaults. Clearing them keeps the node
+        // legacy.
+        delete node.mode;
+        delete node.tagList;
+        delete node.output;
+        delete node.tagsProp;
+        delete node.pollIntervalType;
+        return;
+      }
+
+      node.mode = $("#cip-read-mode").val();
+      node.output = $("#cip-read-output").val();
+      node.tagList = rows;
+      node.tagsProp = $("#cip-read-tagsprop").typedInput("value") || "tags";
+      node.pollIntervalType = noPoll ? "none" : pollType;
+      node.pollInterval = noPoll || pollType === "none" ? 0 : $poll.typedInput("value");
+      // Belong to the original node
+      node.tagName = "";
+      node.dataType = "auto";
     }
   });
 </script>
@@ -36,66 +311,125 @@
     <label for="node-input-endpoint"><i class="fa fa-server"></i> Endpoint</label>
     <input type="text" id="node-input-endpoint" />
   </div>
-  <div class="form-row">
-    <label for="node-input-tagName"><i class="fa fa-bookmark"></i> Tag Name</label>
-    <div style="display:flex; gap:4px;">
-      <input type="text" id="node-input-tagName" placeholder="Program:MainProgram.MyTag" style="flex:1" />
-      <button type="button" id="node-input-browse-btn" class="red-ui-button" title="Browse tags from PLC">
-        <i class="fa fa-search"></i>
-      </button>
-    </div>
+
+  <div id="cip-read-legacy" class="form-tips cip-legacy">
+    <div><b>Legacy mode.</b> This node still works as it did before: <code>msg.tags</code>,
+    <code>msg.tagName</code>, <code>msg.dataType</code> and <code>msg.arraySize</code> override what is set
+    here, and the output is the value for one tag and an array for <code>msg.tags</code>.</div>
+    <div style="margin-top:4px;">Upgrading turns on the tag list, aliases and the output options. A message
+    then changes what is read only where a field says so. A node with one tag keeps its output, the value as
+    <code>msg.payload</code>. One that read <code>msg.tags</code> needs the Dynamic mode, and its output changes
+    shape. Upgrade cannot be undone once the node is deployed.</div>
+    <button type="button" id="cip-read-upgrade" class="red-ui-button" style="margin-top:6px;">
+      <i class="fa fa-arrow-up"></i> Upgrade
+    </button>
   </div>
-  <div class="form-row" id="node-input-taglist-row" style="display:none;">
-    <label><i class="fa fa-list"></i> Tags</label>
-    <select id="node-input-taglist" size="8" style="width:70%; font-family:monospace;"></select>
-  </div>
+
   <div class="form-row">
-    <label for="node-input-dataType"><i class="fa fa-database"></i> Data Type</label>
-    <select id="node-input-dataType">
-      <option value="auto">Auto-detect</option>
-      <option value="BOOL">BOOL</option>
-      <option value="INT">INT (16-bit)</option>
-      <option value="DINT">DINT (32-bit)</option>
-      <option value="REAL">REAL (float)</option>
-      <option value="STRING">STRING</option>
-      <option value="STRUCT">STRUCT (UDT)</option>
-      <option value="ARRAY">ARRAY</option>
+    <label for="cip-read-mode"><i class="fa fa-list-alt"></i> Mode</label>
+    <select id="cip-read-mode" style="width:70%">
+      <option value="ui">UI (list of tags)</option>
+      <option value="dynamic">Dynamic (msg)</option>
     </select>
   </div>
+
+  <div class="cip-multiple">
+    <div class="form-row" style="margin-bottom:0;">
+      <label><i class="fa fa-list"></i> Tags</label>
+    </div>
+    <div class="form-row">
+      <ol id="cip-read-list"></ol>
+      <div class="form-tips cip-tip cip-tip-wide">Alias, tag, data type, and a size for ARRAY. The alias is the key of the tag in a keyed result.</div>
+    </div>
+  </div>
+
+  <div class="cip-msg">
+    <div class="form-row">
+      <label for="cip-read-tagsprop"><i class="fa fa-bookmark"></i> Tags</label>
+      <div class="cip-field">
+        <input type="text" id="cip-read-tagsprop" />
+      </div>
+      <div class="form-tips cip-tip">An array of tag names or { name, alias, dataType, arraySize } objects, or a comma separated string. See Dynamic in the help.</div>
+    </div>
+  </div>
+
   <div class="form-row">
-    <label for="node-input-pollInterval"><i class="fa fa-clock-o"></i> Poll (ms)</label>
-    <input type="number" id="node-input-pollInterval" placeholder="0 = trigger only" />
+    <label for="cip-read-output"><i class="fa fa-sign-out"></i> Output</label>
+    <select id="cip-read-output" style="width:70%">
+      <option value="legacy">Legacy (see the note above)</option>
+      <option value="value">Value (one tag)</option>
+      <option value="keyvalue">Key Value pairs</option>
+      <option value="keyresult">Key Result pairs</option>
+      <option value="array">Array of results</option>
+    </select>
+    <div class="form-tips cip-tip" id="cip-read-output-tip"></div>
+  </div>
+
+  <div class="form-row" id="cip-read-poll-row">
+    <label for="cip-read-poll"><i class="fa fa-clock-o"></i> Poll (ms)</label>
+    <div class="cip-field">
+      <input type="text" id="cip-read-poll" />
+    </div>
   </div>
 </script>
 
 <script type="text/html" data-help-name="cip-read">
-  <p>Reads a tag value from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
+  <p>Reads tag values from an Allen-Bradley PLC via EtherNet/IP (CIP).</p>
   <h3>Inputs</h3>
-  <p>An incoming message triggers a read. Set <code>msg.tagName</code> to override the configured tag.</p>
-  <p>For batch reads, set <code>msg.tags</code> (see Batch Mode below). <code>msg.tags</code> wins over
-  the Tag Name field. Plain tags are read together in one operation; arrays and UDTs are read
-  individually, since they need their own element count or structure decoding.</p>
+  <p>An incoming message triggers a read. <b>Mode</b> says which tags are read, and nothing else in the
+  message changes that, so no message property can override what the editor shows.</p>
+  <dl class="message-properties">
+    <dt>UI (list of tags)</dt>
+    <dd>One row per tag. A row has an optional alias, a tag (a string, an environment variable or a message property such as
+    <code>msg.payload.tag1</code>), a data type and a size for ARRAY.</dd>
+    <dt>Dynamic (msg)</dt>
+    <dd>The tags come from a message property, <code>msg.tags</code> by default. See Dynamic below.</dd>
+  </dl>
+  <p>Plain tags are read together in one operation. Arrays and UDTs are read individually, since they need
+  their own element count or structure decoding.</p>
+  <h3>Legacy mode</h3>
+  <p>A node saved before this version keeps working as it did, so <code>msg.tagName</code>, <code>msg.tags</code>,
+  <code>msg.dataType</code> and <code>msg.arraySize</code> still override the node, and the output is the value for one
+  tag and an array for <code>msg.tags</code>. The editor shows it with a note and an <b>Upgrade</b> button. Saving it without
+  upgrading changes nothing. Upgrading turns on everything on this page. A node with one tag keeps its
+  output (the Value output). A node that read <code>msg.tags</code> should use Dynamic mode, and its output changes
+  shape. After an upgrade the node logs a warning, once per deploy, when a message carries <code>msg.tags</code> that it
+  is not set to read.</p>
   <h3>Outputs</h3>
   <dl class="message-properties">
     <dt>payload <span class="property-type">*</span></dt>
-    <dd>The tag value read from the PLC. For batch reads, an array of
-    <code>{ tagName, value, type }</code> objects, one per requested tag, each carrying an
-    <code>error</code> string instead of a value if that tag could not be read.</dd>
-    <dt>tagName <span class="property-type">string</span></dt>
-    <dd>The name of the tag that was read.</dd>
-    <dt>dataType <span class="property-type">string</span></dt>
-    <dd>The CIP data type of the tag.</dd>
+    <dd>What <b>Output</b> says:
+      <ul>
+        <li><b>Value</b> (only for a list with exactly one tag): the value of the tag. <code>msg.tagName</code> and
+        <code>msg.dataType</code> say which tag and its CIP type.</li>
+        <li><b>Key Value pairs</b>: <code>{ key: value }</code>, so <code>msg.payload.start</code> is the value. The key is the
+        row's alias, or the tag exactly as written. Keys are literal, so <code>MyUdt.Member</code> is one key, and
+        <code>MyArray[0..2]</code> and <code>MyArray[5..7]</code> are two. Two tags with the same key is an error.
+        If any tag cannot be read, nothing is sent and the error says which.</li>
+        <li><b>Key Result pairs</b>: <code>{ key: { tagName, value, type } }</code>, with the same keys. A tag the PLC rejects has an
+        <code>error</code> string in place of its value and the others are still read. The node status turns yellow when that happens.</li>
+        <li><b>Array of results</b>: one <code>{ alias, tagName, value, type }</code> per tag in the order of the
+        list (<code>alias</code> only when set). A tag the PLC rejects has an <code>error</code> string in place of
+        its value and the others are still read. The node status turns yellow when that happens.</li>
+      </ul>
+    </dd>
     <dt>timestamp <span class="property-type">number</span></dt>
     <dd>Unix timestamp (ms) of the read.</dd>
   </dl>
   <h3>Details</h3>
-  <p>Set a poll interval (in milliseconds) for periodic reads, or leave at 0 for trigger-only mode.
+  <p><b>Poll</b> can be None (read when a message arrives), a number of milliseconds, or an environment
+  variable. A poll tick has no message, so Poll is hidden, and saved as None, when a message supplies the tags:
+  Dynamic mode, or a row whose tag is a message property.
+  An interval that is not a positive whole number is reported by name and the node does not poll.
+  A poll whose configuration is not valid is reported once and stops. A tag the PLC rejects is reported the first
+  time and polling goes on, so it recovers when the tag appears.
   Backpressure is applied: if a read is already in-flight, subsequent poll ticks are skipped.</p>
   <p><b>Data Type</b> controls how the tag value is decoded:
   <ul>
-    <li><b>Auto-detect</b> — scalars as native values; arrays are read in full and UDT/STRUCT tags are expanded to objects, when the PLC tag list is available.</li>
-    <li><b>STRUCT</b> — force UDT/structure decoding (requires tag list from the endpoint connection). An array of UDTs yields one object per element.</li>
-    <li><b>ARRAY</b> — read the full array. Override the length with <code>msg.arraySize</code>.</li>
+    <li><b>Auto</b> - scalars as native values; arrays are read in full and UDT/STRUCT tags are expanded to objects, when the PLC tag list is available.</li>
+    <li><b>BOOL, INT, DINT, REAL, STRING</b> - read the tag as a single value. A bare array name then gives its first element and not the whole array.</li>
+    <li><b>STRUCT</b> - force UDT/structure decoding (requires tag list from the endpoint connection). An array of UDTs yields one object per element.</li>
+    <li><b>ARRAY</b> - read the full array. Set the length with <b>Size</b>.</li>
   </ul>
   </p>
   <p><b>Values:</b> BOOL is a boolean. SINT, USINT, INT, UINT, DINT, UDINT, REAL, LREAL, BYTE and WORD are numbers.
@@ -105,12 +439,17 @@
   e.g. <code>Read failed: Path destination unknown (CIP 0x05)</code>. No message is sent.</p>
   <p><b>Array lengths</b> come from the UDT template for a member array such as
   <code>MyStruct.Member</code>, and otherwise from the controller's Symbol Object (array
-  dimensions) in a single request — the tag list does not carry the length of a
+  dimensions) in a single request. The tag list does not carry the length of a
   controller- or program-scoped array tag. If a controller does not answer that
   attribute, the length is found by a bisecting index probe. The result is cached until
   the connection is re-established, so polling an array costs one request per poll.</p>
-  <p>Click the <i class="fa fa-search"></i> button next to the tag name field to browse available tags
-  from the connected PLC. The endpoint must be deployed and connected first.</p>
+  <p>Click the <i class="fa fa-search"></i> button on a row to browse available tags from the connected PLC. The
+  endpoint must be deployed and connected first. The list shows each tag with its type and filters as you type: a space,
+  underscore, dot or dash matches one or more of those, so <code>em di 01</code> finds <code>_IO_EM_DI_01</code>, and a
+  word that starts the tag's type (<code>bool</code>, <code>dint</code>) filters on the type. It opens on the tag already in the field.
+  Browsing fills a string, so the button is off when the tag comes from a message property or an environment variable.</p>
+  <p>The <b>add tag</b> button has an accesskey, <b>Alt+T</b> in Chrome and Edge
+  (<b>Alt+Shift+T</b> in Firefox, <b>Ctrl+Option+T</b> on a Mac), and a new row takes the focus.</p>
   <h3>Tag Addressing</h3>
   <ul>
     <li><b>Bit-level access:</b> Use dot notation to read individual bits, e.g. <code>MyDint.5</code> reads bit 5 of a DINT tag.</li>
@@ -120,7 +459,7 @@
     <li><b>Whole array:</b> Give the tag on its own, e.g. <code>MyArray</code> or <code>MyStruct.Member</code>, to read every element. An array of UDTs yields one object per element.
       This needs the PLC tag list, which ControlLogix and CompactLogix provide. Without one (a Micro800) the node cannot tell that a bare name is an array
       and returns element 0 only. There, read a range such as <code>MyArray[0..9]</code>, or set Data Type to <i>ARRAY</i> (the length is found automatically,
-      or set <code>msg.arraySize</code>). The write and subscribe nodes always treat a bare name as element 0, see their help.</li>
+      or set <b>Size</b>). The write and subscribe nodes always treat a bare name as element 0, see their help.</li>
     <li><b>Strings:</b> Read the STRING tag itself, e.g. <code>Line1.LotName</code>, to get the
     text. Built-in and custom-length strings (STRING20 and so on) both return text.
     <code>.LEN</code> and <code>.DATA</code> are the tag's length and character array, so you
@@ -130,26 +469,21 @@
   <p>Tag paths are matched case-insensitively, the way Logix treats them:
   <code>mystruct.member</code> and <code>MyStruct.Member</code> address the same tag and
   both decode into an object.</p>
-  <h3>Batch Mode</h3>
-  <p>Send <code>msg.tags</code> to read several tags at once. It can be:</p>
+  <h3>Dynamic</h3>
+  <p>Reads the tags from the message property named in the <b>Tags</b> field, <code>msg.tags</code> by
+  default. It can be:</p>
   <ul>
     <li>an array of tag names, e.g. <code>["Tag1", "MyArray[0..9]"]</code></li>
-    <li>an array of objects, <code>{ name, dataType, arraySize }</code>. <code>tagName</code> is accepted in place of
+    <li>an array of objects, <code>{ name, alias, dataType, arraySize }</code>. <code>tagName</code> is accepted in place of
     <code>name</code>. <code>dataType</code> (<i>ARRAY</i> or <i>STRUCT</i>) and <code>arraySize</code> (a positive
     whole number) are optional and apply to that tag only. The entries a cip-subscribe sends
     (<code>{ name, value, type, changed }</code>) are accepted.</li>
     <li>a comma separated string, e.g. <code>"Tag1, Tag2, Arr[1,2]"</code>. A comma inside square brackets stays
     part of the tag name.</li>
   </ul>
-  <p><code>msg.tags</code> wins over the Tag Name field, so a cip-read wired after a cip-subscribe reads the
-  subscribed tags and not its own.</p>
-  <p><code>msg.payload</code> is an array of <code>{ tagName, value, type }</code> objects in the
-  order requested, so <code>payload[2]</code> is always the result for <code>tags[2]</code>. A tag the PLC
-  rejects, such as one that does not exist, has an <code>error</code> string in place of its value and
-  does not stop the other tags being read. The node status turns yellow when that happens.</p>
-  <p>An entry that is not valid, such as a number, an empty name, an object without a name or an
-  <code>arraySize</code> that is not a positive whole number, fails the whole message before anything is
-  read. The error lists every bad entry by position and can be caught with a Catch node.</p>
+  <p>The output is Key Value pairs, Key Result pairs or an Array of results, as chosen. An entry that is not valid, such as a number, an empty
+  name, an object without a name or an <code>arraySize</code> that is not a positive whole number, fails the whole
+  message before anything is read. The error lists every bad entry by position and can be caught with a Catch node.</p>
 
   <h3>Dynamic control</h3>
   <p>The PLC connection can be selected, re-pointed and controlled at runtime with
