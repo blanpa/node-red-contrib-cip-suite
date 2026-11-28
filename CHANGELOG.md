@@ -19,6 +19,15 @@
 - **cip-read** - **Poll** is None, a number or an environment variable. An invalid configuration is
   reported once and stops the poll, and a tag the PLC rejects is reported the first time while polling
   goes on.
+- **cip-write** - **Upgrade**, as for cip-read. The tag list has a row per tag with a data type check and an
+  optional alias, and **Value** takes the place of Static Value: a message property (`msg.payload` by default),
+  or fixed text, number, boolean, json or an environment variable. One tag takes the value as it is. Several tags
+  take an array (by position), an object keyed by alias or tag, or an array of `{ name, value }` entries, which
+  is the shape cip-read and cip-subscribe send. **Dynamic** mode writes the tags of a message property
+  (`msg.tags` by default) as `{ name, value }` entries or an object of values by tag name. Everything is checked
+  before anything is written, so a bad message writes nothing. The output is the result of the write (one tag),
+  Key Result pairs (`{ alias: result }`) or an array of results with the alias beside each, where a failed
+  tag does not stop the others. The Key Result pairs of a cip-read can be written as they are.
 
 ## 0.2.3 — 2026-11-24
 

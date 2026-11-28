@@ -539,7 +539,25 @@ refused it before sending (text on a numeric tag, a value out of range):
 }
 ```
 
-A batch write (`msg.tags`) puts one such result per tag into a `payload` array.
+Several tags put one such result per tag into a `payload` array (the **Array of results** output),
+with the tag's `alias` beside it when it has one, or into an object keyed by alias, or else the tag
+as written (**Key Result pairs**). A tag that fails has `success: false` and an `error`, and the
+others are still written.
+
+**What several tags are given.** In UI mode the **Value** (`msg.payload` by default) is one of:
+
+```js
+[1, 2, [3, 4]]                                  // one value per row, by position
+{ "start": true, "MyArray[0..1]": [3, 4] }      // keyed by the row's alias, or the tag as written
+[{ "name": "start", "value": true }]            // the entries cip-read and cip-subscribe send
+{ "start": { "tagName": "_IO_EM_DI_00", "value": true } }   // the Key Result pairs of a cip-read
+```
+
+An array is read as entries when its elements are objects with a `name` or `tagName`. A missing
+value, a name that is not a row, a name used twice or the wrong number of values fails the whole message
+before anything is written. With exactly one row the value is written to that tag as it is. **Dynamic**
+mode takes `msg.tags` (or another property) as an array of `{ name, value }` or an object of values by tag
+name. A node saved before this version keeps its old behaviour until it is upgraded in the editor.
 
 ### cip-subscribe Output
 
